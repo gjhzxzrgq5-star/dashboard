@@ -3,29 +3,21 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
-const mysql = require('mysql2/promise'); // Assurez-vous d'avoir fait : npm install mysql2
+const MySQLStore = require('express-mysql-session')(session);
 
 const store = require('../lib/store');
 const bot = require('../lib/bot');
-
-const SESSIONS_DIR = path.join(__dirname, '..', 'data', 'sessions');
-if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+const { pool: db } = require('../lib/db');
 
 const VIEWS_DIR = __dirname;
-const TICKETS_FILE = path.join(__dirname, '..', 'data', 'tickets.json');
 const DISCORD_API = 'https://discord.com/api/v10';
 
-// ── Pool de Connexion MySQL ──────────────────────────────────
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'dashboard_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+// ── Sessions stockées en MySQL ───────────────────────────────
+// Avant : session-file-store écrivait sur le disque local du conteneur,
+// qui est réinitialisé à chaque redeploy/redémarrage Render → tout le monde
+// était déconnecté et devait tout reconfigurer. Maintenant les sessions
+// (donc les connexions Discord des admins) survivent aux redeploys.
+const sessionStore = new MySQLStore({}, db);
 
 function readView(name) {
   return fs.readFileSync(path.join(VIEWS_DIR, 'public', name), 'utf8');
@@ -47,17 +39,20 @@ function requireAuthAppSet(req, res, next) {
   return res.redirect('/setup');
 }
 
-function readTickets() {
+// Les tickets vivent désormais en MySQL (table `tickets`, gérée par
+// lib/ticketManager.js) plutôt que dans data/tickets.json.
+async function readTickets() {
   try {
-    if (!fs.existsSync(TICKETS_FILE)) return [];
-    return JSON.parse(fs.readFileSync(TICKETS_FILE, 'utf8'));
-  } catch {
+    const [rows] = await db.query('SELECT data FROM tickets ORDER BY created_at DESC');
+    return rows.map((r) => JSON.parse(r.data));
+  } catch (err) {
+    console.error('Erreur lecture tickets MySQL:', err.message);
     return [];
   }
 }
 
-function computeStats() {
-  const tickets = readTickets();
+async function computeStats() {
+  const tickets = await readTickets();
   const total = tickets.length;
   const open = tickets.filter((t) => t.status === 'open').length;
   const closed = tickets.filter((t) => t.status === 'closed').length;
@@ -111,12 +106,7 @@ function createDashboardServer() {
   app.use(express.json());
   app.use(
     session({
-      store: new FileStore({
-        path: SESSIONS_DIR,
-        ttl: 60 * 60 * 24 * 30,
-        retries: 1,
-        logFn: () => {},
-      }),
+      store: sessionStore,
       secret: store.getSessionSecret(),
       resave: false,
       saveUninitialized: false,
@@ -130,6 +120,15 @@ function createDashboardServer() {
   );
 
   app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
+
+  // ── Healthcheck ──────────────────────────────────────────
+  // À pinger toutes les 5-10 min par un service externe gratuit (UptimeRobot,
+  // cron-job.org...) pour empêcher Render de mettre le service en veille sur
+  // le plan gratuit. Sans requête HTTP entrante, Render endort le process
+  // après ~15 min d'inactivité, ce qui coupe le bot avec.
+  app.get('/healthz', (req, res) => {
+    res.json({ ok: true, bot: bot.getStatus().status, uptime: process.uptime() });
+  });
 
   // ── Routing racine ─────────────────────────────────────
   app.get('/', (req, res) => {
@@ -447,12 +446,12 @@ function createDashboardServer() {
     }
   });
 
-  api.get('/stats', (req, res) => {
-    res.json(computeStats());
+  api.get('/stats', async (req, res) => {
+    res.json(await computeStats());
   });
 
-  api.get('/tickets/export.csv', (req, res) => {
-    const tickets = readTickets();
+  api.get('/tickets/export.csv', async (req, res) => {
+    const tickets = await readTickets();
     const csv = toCsv(tickets);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="tickets-${Date.now()}.csv"`);
