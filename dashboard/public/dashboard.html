@@ -327,50 +327,6 @@
             </div>
           </fieldset>
 
-          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📜 Logs & Webhooks</legend>
-            <div class="field">
-              <label for="input-fivem-log-webhook">Webhook Discord (Logs In-Game)</label>
-              <input type="url" id="input-fivem-log-webhook" placeholder="https://discord.com/api/webhooks/...">
-            </div>
-            <div class="field-row">
-              <div class="field" style="flex:1;">
-                <label><input type="checkbox" id="chk-log-kills"> Loguer les Kills</label>
-              </div>
-              <div class="field" style="flex:1;">
-                <label><input type="checkbox" id="chk-log-bans"> Loguer les Bans/Kicks</label>
-              </div>
-              <div class="field" style="flex:1;">
-                <label><input type="checkbox" id="chk-log-commands"> Loguer les commandes Admin</label>
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🔑 Synchronisation des Rôles</legend>
-            <div class="field-row" style="align-items:center; margin-bottom: 10px;">
-              <label for="toggle-sync-roles" style="margin:0;">Synchroniser les rôles Discord In-Game (AcePerms / VIP)</label>
-              <input type="checkbox" id="toggle-sync-roles" style="width:auto;">
-            </div>
-            <div class="field">
-              <label for="input-fivem-god-role">ID Rôle Staff/Admin Discord</label>
-              <input type="text" id="input-fivem-god-role" class="mono" placeholder="123456789012345678">
-            </div>
-          </fieldset>
-
-          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px;">
-            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🛡️ Sécurité & Whitelist</legend>
-            <div class="field-row" style="align-items:center; margin-bottom: 10px;">
-              <label for="toggle-whitelist" style="margin:0;">Activer la Whitelist via Discord</label>
-              <input type="checkbox" id="toggle-whitelist" style="width:auto;">
-            </div>
-            <div class="field">
-              <label for="input-fivem-whitelist-role">ID Rôle Discord requis pour rejoindre</label>
-              <input type="text" id="input-fivem-whitelist-role" class="mono" placeholder="123456789012345678">
-            </div>
-          </fieldset>
-        </div>
-
         <button class="btn-primary" id="save-fivem-btn" style="margin-top: 15px;">Enregistrer la config FiveM</button>
       </div>
 
