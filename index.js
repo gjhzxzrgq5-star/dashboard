@@ -11,10 +11,7 @@ const app = createDashboardServer();
 
 const express = require('express');
 const cors = require('cors'); 
-<<<<<<< HEAD
 
-=======
->>>>>>> 193a48b (Mise à jour du dashboard)
 
 app.use(cors()); 
 app.use(express.json());
