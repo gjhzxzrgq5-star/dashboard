@@ -57,21 +57,38 @@ function fillSelect(select, items, { value, label, placeholder }) {
 }
 
 function escapeHtml(str) {
+  if (!str) return '';
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
 }
 
-// ── Navigation ────────────────────────────────────────────
-document.querySelectorAll('.nav-item').forEach((item) => {
-  item.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
-    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-    item.classList.add('active');
-    const targetView = document.getElementById(`view-${item.dataset.view}`);
-    if (targetView) targetView.classList.add('active');
+// ── LAZY LOADING DES VUES & NAVIGATION ────────────────────
+const LAZY_LOADERS = { 
+  stats: loadStats, 
+  access: loadAdmins,
+  livechat: loadTickets 
+};
+const loadedViews = new Set(['overview']);
+
+function initNavigation() {
+  document.querySelectorAll('.nav-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
+      document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+      
+      item.classList.add('active');
+      const viewName = item.dataset.view;
+      const targetView = document.getElementById(`view-${viewName}`);
+      if (targetView) targetView.classList.add('active');
+
+      if (!loadedViews.has(viewName) && LAZY_LOADERS[viewName]) {
+        loadedViews.add(viewName);
+        LAZY_LOADERS[viewName]();
+      }
+    });
   });
-});
+}
 
 document.getElementById('logout-btn')?.addEventListener('click', async () => {
   await api('POST', '/api/logout');
@@ -109,7 +126,7 @@ async function refreshStatus() {
 
     const lines = [];
     lines.push(`<strong>Statut :</strong> ${STATUS_LABELS[s.status] || s.status}`);
-    if (s.tag) lines.push(`<strong>Compte :</strong> <span class="mono">${s.tag}</span>`);
+    if (s.tag) lines.push(`<strong>Compte :</strong> <span class="mono">${escapeHtml(s.tag)}</span>`);
     if (s.guildCount) lines.push(`<strong>Serveurs :</strong> ${s.guildCount}`);
     if (s.ping !== null && s.ping >= 0) lines.push(`<strong>Latence :</strong> ${s.ping} ms`);
     if (s.lastError) lines.push(`<strong style="color:var(--coral)">Dernière erreur :</strong> ${escapeHtml(s.lastError)}`);
@@ -308,7 +325,7 @@ function renderTicketTypes() {
       : '';
 
     el.innerHTML = `
-      <div class="stub-emoji">${type.emoji || '🎫'}</div>
+      <div class="stub-emoji">${escapeHtml(type.emoji) || '🎫'}</div>
       <div class="stub-body">
         <div class="stub-title-row">
           <span class="color-dot" style="background:#${(type.color || '5865F2').replace('#', '')}"></span>
@@ -365,7 +382,6 @@ function openTypeModal(type = null) {
   document.getElementById('type-color').value = type ? type.color : '5865F2';
   document.getElementById('type-delete-btn').style.display = type ? 'inline-flex' : 'none';
 
-  // 1. Remplissage des catégories Discord
   const categorySelect = document.getElementById('type-category');
   if (categorySelect) {
     categorySelect.innerHTML = '<option value="">Utiliser la catégorie par défaut (Globale)</option>';
@@ -381,7 +397,6 @@ function openTypeModal(type = null) {
     categorySelect.value = type ? (type.categoryId || '') : '';
   }
 
-  // 2. Champ Premium (Message d'accueil personnalisé)
   const welcomeInput = document.getElementById('type-welcome-msg');
   if (welcomeInput) {
     welcomeInput.value = type ? (type.welcomeMessage || '') : '';
@@ -408,7 +423,6 @@ document.getElementById('type-save-btn')?.addEventListener('click', async () => 
   const description = document.getElementById('type-desc').value.trim();
   const color = document.getElementById('type-color').value.trim().replace('#', '') || '5865F2';
   
-  // Nouveaux champs pris en compte !
   const categoryId = document.getElementById('type-category')?.value || '';
   const welcomeMessage = document.getElementById('type-welcome-msg')?.value.trim() || '';
 
@@ -549,7 +563,7 @@ async function loadStats() {
           <div class="activity-row">
             <span class="status-dot ${t.status === 'open' ? 'online' : 'offline'}"></span>
             <div class="activity-body">
-              <div><strong>${escapeHtml(typeLabel(t.typeId))}</strong> — ${escapeHtml(t.userTag || 'inconnu')} <span class="stub-id mono">#${t.id}</span></div>
+              <div><strong>${escapeHtml(typeLabel(t.typeId))}</strong> — ${escapeHtml(t.userTag || 'inconnu')} <span class="stub-id mono">#${escapeHtml(t.id)}</span></div>
               <div class="field-hint" style="margin-top:2px;">
                 ${t.status === 'open' ? `Ouvert le ${formatDate(t.createdAt)}` : `Fermé le ${formatDate(t.closedAt)}`}
                 ${t.claimedByTag ? ` · pris en charge par ${escapeHtml(t.claimedByTag)}` : ''}
@@ -584,9 +598,9 @@ async function loadAdmins() {
       const isSelf = id === data.selfId;
       return `
       <div class="admin-row">
-        <span class="mono">${id}</span>
+        <span class="mono">${escapeHtml(id)}</span>
         ${isSelf ? '<span class="role-chip">Toi</span>' : ''}
-        <button class="btn-ghost admin-remove-btn" data-id="${id}" ${data.adminIds.length <= 1 ? 'disabled' : ''}>Retirer</button>
+        <button class="btn-ghost admin-remove-btn" data-id="${escapeHtml(id)}" ${data.adminIds.length <= 1 ? 'disabled' : ''}>Retirer</button>
       </div>`;
     })
     .join('');
@@ -675,7 +689,7 @@ function renderMessages(ticketId) {
       msgDiv.style.alignSelf = 'flex-start';
     }
 
-    msgDiv.innerHTML = `<strong>${escapeHtml(msg.sender)}</strong> <span style="font-size:10px; color:#aaa; margin-left:6px;">${msg.time}</span><br>${escapeHtml(msg.text)}`;
+    msgDiv.innerHTML = `<strong>${escapeHtml(msg.sender)}</strong> <span style="font-size:10px; color:#aaa; margin-left:6px;">${escapeHtml(msg.time)}</span><br>${escapeHtml(msg.text)}`;
     chatMessages.appendChild(msgDiv);
   });
 
@@ -748,26 +762,10 @@ function applyThemeConfig(config) {
   }
 }
 
-// ── LAZY LOADING DES VUES ─────────────────────────────────
-const LAZY_LOADERS = { 
-  stats: loadStats, 
-  access: loadAdmins,
-  livechat: loadTickets 
-};
-const loadedViews = new Set(['overview']);
-
-document.querySelectorAll('.nav-item').forEach((item) => {
-  item.addEventListener('click', () => {
-    const view = item.dataset.view;
-    if (!loadedViews.has(view) && LAZY_LOADERS[view]) {
-      loadedViews.add(view);
-      LAZY_LOADERS[view]();
-    }
-  });
-});
-
 // ── INITIALISATION COMPLÈTE AU DOM ────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  initNavigation();
+
   // Live Console Events
   const ticketSelect = document.getElementById('select-active-ticket');
   const chatInput = document.getElementById('live-chat-input');
@@ -793,7 +791,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   blurRange?.addEventListener('input', (e) => {
     const val = e.target.value;
-    document.getElementById('blur-val').textContent = val;
+    const blurVal = document.getElementById('blur-val');
+    if (blurVal) blurVal.textContent = val;
     document.querySelectorAll('.panel, .sidebar').forEach((el) => {
       el.style.backdropFilter = `blur(${val}px)`;
     });
@@ -801,7 +800,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   opacityRange?.addEventListener('input', (e) => {
     const val = e.target.value;
-    document.getElementById('opacity-val').textContent = val;
+    const opacityVal = document.getElementById('opacity-val');
+    if (opacityVal) opacityVal.textContent = val;
     const opacityHex = Math.round((val / 100) * 255).toString(16).padStart(2, '0');
     document.querySelectorAll('.panel').forEach((el) => {
       el.style.backgroundColor = `#18191c${opacityHex}`;
