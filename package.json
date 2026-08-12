@@ -23,5 +23,6 @@
   },
   "devDependencies": {
     "wrangler": "^4.121.0"
+    "mysql2": "^3.9.0"
   }
 }
