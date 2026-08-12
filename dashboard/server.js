@@ -3,9 +3,13 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 
 const store = require('../lib/store');
 const bot = require('../lib/bot');
+
+const SESSIONS_DIR = path.join(__dirname, '..', 'data', 'sessions');
+if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
 const VIEWS_DIR = __dirname;
 const TICKETS_FILE = path.join(__dirname, '..', 'data', 'tickets.json');
@@ -100,10 +104,22 @@ function createDashboardServer() {
   app.use(express.json());
   app.use(
     session({
+      store: new FileStore({
+        path: SESSIONS_DIR,
+        ttl: 60 * 60 * 24 * 30, // 30 jours (en secondes pour session-file-store)
+        retries: 1,
+        logFn: () => {}, // évite le spam dans la console
+      }),
       secret: store.getSessionSecret(),
       resave: false,
       saveUninitialized: false,
-      cookie: { maxAge: 1000 * 60 * 60 * 24 * 30 },
+      rolling: true, // prolonge la session à chaque visite (renouvelle les 30 jours)
+      cookie: {
+        maxAge: 1000 * 60 * 60 * 24 * 30, // 30 jours
+        httpOnly: true,
+        sameSite: 'lax',
+        // secure: true, // décommente si le dashboard tourne en HTTPS
+      },
     })
   );
 
