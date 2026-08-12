@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.local
+
+# Contient le token du bot, le hash du mot de passe admin et les tickets en cours.
+# Ne JAMAIS commit ou partager ce dossier tel quel.
+data/settings.json
+data/tickets.json

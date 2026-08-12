@@ -1,0 +1,32 @@
+{
+  "auth": {
+    "clientId": "",
+    "clientSecret": "",
+    "redirectUri": "",
+    "adminIds": [],
+    "guildId": ""
+  },
+  "sessionSecret": null,
+  "bot": {
+    "token": "",
+    "panelGuildId": "",
+    "panelChannelId": "",
+    "staffGuildId": "",
+    "staffCategoryId": "",
+    "embedColor": "5865F2",
+    "panelBanner": "",
+    "panelTitle": "🎫 Support",
+    "panelDescription": "Clique sur le bouton correspondant à ta demande pour ouvrir un ticket.\nLa discussion se déroulera **en message privé**.",
+    "footerText": "Un seul ticket ouvert à la fois par utilisateur."
+  },
+  "ticketTypes": [
+    {
+      "id": "support",
+      "label": "Support",
+      "emoji": "🛠️",
+      "description": "Problème technique ou aide générale",
+      "color": "5865F2",
+      "allowedRoles": []
+    }
+  ]
+}
