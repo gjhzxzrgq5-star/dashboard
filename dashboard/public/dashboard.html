@@ -300,32 +300,26 @@
       </div>
 
       <div class="panel">
-        <h3 class="panel-title">Configuration Serveur FiveM</h3>
-        <p class="panel-sub">Paramétrez la connexion direct entre votre serveur FiveM (ESX, QBCore, txAdmin) et le Bot Discord.</p>
-        
-        <div class="field-row" style="align-items:center; margin-bottom: 20px;">
-          <label for="toggle-fivem" style="margin:0; font-weight: bold;">Activer l'intégration FiveM</label>
-          <input type="checkbox" id="toggle-fivem" style="width:auto;">
-        </div>
+  <h3 class="panel-title">Configuration Serveur FiveM</h3>
+  <p class="panel-sub">Paramétrez le lien de connexion directe de votre serveur FiveM pour lier l'application au Bot Discord.</p>
 
-        <div id="fivem-options-container">
-          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🌐 Connexion & API</legend>
-            <div class="field-row">
-              <div class="field">
-                <label for="input-fivem-address">Code CFX ou IP:port</label>
-                <input type="text" id="input-fivem-address" class="mono" placeholder="abcd12 ou 51.68.12.34:30120">
-              </div>
-              <div class="field">
-                <label for="input-fivem-secret">Clé API / Secret Shared</label>
-                <input type="password" id="input-fivem-secret" class="mono" placeholder="Clé secrète de votre ressource">
-              </div>
-            </div>
-            <div class="field">
-              <label for="input-fivem-banspath">Endpoint des bannis (avancé)</label>
-              <input type="text" id="input-fivem-banspath" class="mono" placeholder="/bans.json">
-            </div>
-          </fieldset>
+  <div class="field-row" style="align-items:center; margin-bottom: 20px;">
+    <label for="toggle-fivem" style="margin:0; font-weight: bold;">Activer l'intégration FiveM</label>
+    <input type="checkbox" id="toggle-fivem" style="width:auto;">
+  </div>
+
+  <div id="fivem-options-container">
+    <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+      <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🌐 Connexion FiveM</legend>
+      <div class="field">
+        <label for="input-fivem-url">Lien de connexion au serveur FiveM</label>
+        <input type="url" id="input-fivem-url" class="mono" placeholder="https://cfx.re/join/xxxxxx ou cfx.re/join/xxxxxx">
+      </div>
+    </fieldset>
+
+    <button class="btn-primary" id="save-fivem-btn" style="margin-top: 15px;">Enregistrer la config FiveM</button>
+  </div>
+</div>
 
         <button class="btn-primary" id="save-fivem-btn" style="margin-top: 15px;">Enregistrer la config FiveM</button>
       </div>
