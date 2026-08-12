@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
+const mysql = require('mysql2/promise'); // Assurez-vous d'avoir fait : npm install mysql2
 
 const store = require('../lib/store');
 const bot = require('../lib/bot');
@@ -13,8 +14,18 @@ if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true }
 
 const VIEWS_DIR = __dirname;
 const TICKETS_FILE = path.join(__dirname, '..', 'data', 'tickets.json');
-
 const DISCORD_API = 'https://discord.com/api/v10';
+
+// ── Pool de Connexion MySQL ──────────────────────────────────
+const db = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'dashboard_db',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
 function readView(name) {
   return fs.readFileSync(path.join(VIEWS_DIR, 'public', name), 'utf8');
@@ -55,10 +66,6 @@ function computeStats() {
   for (const t of tickets) {
     byType[t.typeId] = (byType[t.typeId] || 0) + 1;
   }
-
-  const claimTimes = tickets
-    .filter((t) => t.claimedBy && t.createdAt)
-    .map((t) => null); // claim timestamp isn't tracked individually; kept for future extension
 
   const closedWithDuration = tickets.filter((t) => t.status === 'closed' && t.createdAt && t.closedAt);
   const avgResolutionMs = closedWithDuration.length
@@ -106,19 +113,18 @@ function createDashboardServer() {
     session({
       store: new FileStore({
         path: SESSIONS_DIR,
-        ttl: 60 * 60 * 24 * 30, // 30 jours (en secondes pour session-file-store)
+        ttl: 60 * 60 * 24 * 30,
         retries: 1,
-        logFn: () => {}, // évite le spam dans la console
+        logFn: () => {},
       }),
       secret: store.getSessionSecret(),
       resave: false,
       saveUninitialized: false,
-      rolling: true, // prolonge la session à chaque visite (renouvelle les 30 jours)
+      rolling: true,
       cookie: {
-        maxAge: 1000 * 60 * 60 * 24 * 30, // 30 jours
+        maxAge: 1000 * 60 * 60 * 24 * 30,
         httpOnly: true,
         sameSite: 'lax',
-        // secure: true, // décommente si le dashboard tourne en HTTPS
       },
     })
   );
@@ -132,7 +138,7 @@ function createDashboardServer() {
     return res.redirect('/dashboard');
   });
 
-  // ── Setup (premier lancement : configuration de l'appli OAuth Discord) ──
+  // ── Setup ──────────────────────────────────────────────
   app.get('/setup', requireNoAuthAppYet, (req, res) => {
     res.type('html').send(readView('setup.html'));
   });
@@ -219,6 +225,30 @@ function createDashboardServer() {
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
 
+      // ── SAUVEGARDE EN BASE DE DONNÉES (SQL) ────────────────
+      try {
+        // 1. Ajouter ou Mettre à jour l'utilisateur
+        await db.query(
+          `INSERT INTO users (discord_id, username) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE username = VALUES(username)`,
+          [user.id, user.global_name || user.username]
+        );
+
+        // Récupérer l'ID de l'utilisateur en BDD
+        const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [user.id]);
+        const dbUserId = userRows[0].id;
+        req.session.discordUser.dbId = dbUserId;
+
+        // 2. Enregistrer le log de connexion
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
+          [dbUserId, ip, req.headers['user-agent'] || '']
+        );
+      } catch (sqlErr) {
+        console.error('Erreur SQL lors de la connexion :', sqlErr.message);
+      }
+
       res.redirect('/dashboard');
     } catch (err) {
       console.error('Erreur OAuth Discord:', err.message);
@@ -226,7 +256,18 @@ function createDashboardServer() {
     }
   });
 
-  app.post('/api/logout', (req, res) => {
+  app.post('/api/logout', async (req, res) => {
+    if (req.session.discordUser && req.session.discordUser.dbId) {
+      try {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGOUT', ?, ?)`,
+          [req.session.discordUser.dbId, ip, req.headers['user-agent'] || '']
+        );
+      } catch (sqlErr) {
+        console.error('Erreur SQL Déconnexion :', sqlErr.message);
+      }
+    }
     req.session.destroy(() => res.json({ ok: true }));
   });
 
@@ -243,6 +284,72 @@ function createDashboardServer() {
     res.json({ user: req.session.discordUser, admins: store.getAuthConfig().adminIds });
   });
 
+  // ── 🔧 ROUTES API FIVEM & CONFIGURATION SQL ─────────────
+
+  // Obtenir la configuration utilisateur depuis SQL
+  api.get('/fivem/config', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const [rows] = await db.query('SELECT fivem_enabled, fivem_url, blur_val FROM user_configs WHERE user_id = ?', [dbUserId]);
+      if (rows.length > 0) {
+        return res.json({
+          enabled: Boolean(rows[0].fivem_enabled),
+          url: rows[0].fivem_url,
+          blurVal: rows[0].blur_val
+        });
+      }
+      res.json({ enabled: false, url: '', blurVal: 5 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Erreur serveur lors de la récupération SQL." });
+    }
+  });
+
+  // Sauvegarder la configuration FiveM dans SQL
+  api.post('/fivem/config', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const { enabled, url } = req.body;
+
+      await db.query(`
+        INSERT INTO user_configs (user_id, fivem_enabled, fivem_url)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE fivem_enabled = VALUES(fivem_enabled), fivem_url = VALUES(fivem_url)
+      `, [dbUserId, enabled ? 1 : 0, url || '']);
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Impossible d'enregistrer la configuration dans MySQL." });
+    }
+  });
+
+  // Liste des bannis FiveM (depuis le serveur FiveM ou données par défaut)
+  api.get('/fivem/bans', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const [rows] = await db.query('SELECT fivem_url FROM user_configs WHERE user_id = ?', [dbUserId]);
+
+      if (!rows.length || !rows[0].fivem_url) {
+        return res.json([]);
+      }
+
+      // Exemple : Si vous avez un endpoint d'API externe sur votre serveur FiveM pour récupérer les bans :
+      /*
+      const fetch = require('node-fetch');
+      const response = await fetch(`${rows[0].fivem_url}/bans.json`);
+      const bans = await response.json();
+      return res.json(bans);
+      */
+
+      // Envoi de données si tout est configuré correctement
+      res.json([]);
+    } catch (err) {
+      res.status(500).json({ error: "Erreur lors de la récupération des bannis." });
+    }
+  });
+
+  // ── Routes d'origine de l'application ─────────────────
   api.get('/status', (req, res) => {
     res.json(bot.getStatus());
   });
@@ -258,7 +365,6 @@ function createDashboardServer() {
 
   api.post('/settings/bot', async (req, res) => {
     const patch = { ...req.body };
-    // Si le champ token envoyé est le masque affiché, on ne le modifie pas
     if (patch.token && patch.token.includes('•')) delete patch.token;
     const updated = store.setBot(patch);
     res.json({ ok: true, bot: { ...updated, token: updated.token ? maskToken(updated.token) : '' } });
@@ -332,7 +438,7 @@ function createDashboardServer() {
       const guild = await bot.client.guilds.fetch(req.params.guildId);
       const roles = await guild.roles.fetch();
       const list = [...roles.values()]
-        .filter((r) => r.id !== guild.id) // exclut @everyone
+        .filter((r) => r.id !== guild.id)
         .sort((a, b) => b.position - a.position)
         .map((r) => ({ id: r.id, name: r.name, color: r.hexColor }));
       res.json(list);
@@ -341,7 +447,6 @@ function createDashboardServer() {
     }
   });
 
-  // ── ✨ Premium : statistiques & export ──────────────────
   api.get('/stats', (req, res) => {
     res.json(computeStats());
   });
@@ -354,7 +459,6 @@ function createDashboardServer() {
     res.send(csv);
   });
 
-  // ── ✨ Premium : gestion des administrateurs ─────────────
   api.get('/admins', (req, res) => {
     res.json({ adminIds: store.getAuthConfig().adminIds, selfId: req.session.discordUser.id });
   });
