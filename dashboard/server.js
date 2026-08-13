@@ -177,11 +177,19 @@ function createDashboardServer() {
     res.json({ ok: true, bot: bot.getStatus().status, uptime: process.uptime() });
   });
 
+  // ── Page d'accueil (offres + connexion) ─────────────────
+  // Accessible à tous, même sans être connecté : c'est la vitrine
+  // publique où on choisit son offre (Standard/Premium) et où on se
+  // connecte ensuite avec Discord pour accéder au dashboard.
+  app.get('/accueil', (req, res) => {
+    res.type('html').send(readView('index.html'));
+  });
+
   // ── Routing racine ─────────────────────────────────────
   app.get('/', (req, res) => {
     if (!store.hasAuthApp()) return res.redirect('/setup');
-    if (!req.session.discordUser || !store.isAdmin(req.session.discordUser.id)) return res.redirect('/login');
-    return res.redirect('/dashboard');
+    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    return res.redirect('/accueil');
   });
 
   // ── Setup ──────────────────────────────────────────────
