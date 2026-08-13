@@ -6,7 +6,7 @@ const cors = require('cors');
 const { ensureSchema } = require('./lib/db');
 const store = require('./lib/store');
 
-const PORT = process.env.DASHBOARD_PORT || 3000;
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const HOST = process.env.DASHBOARD_HOST || '0.0.0.0';
 
 // ── Blindage process ──────────────────────────────────────────
@@ -35,44 +35,6 @@ async function main() {
   const app = createDashboardServer();
   app.use(cors());
   app.use(express.json());
-
-  // ── API tickets minimaliste utilisée par certains widgets front ──
-  app.get('/api/tickets', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') return res.json([]);
-    const guild = bot.client.guilds.cache.get(process.env.DISCORD_GUILD_ID || '');
-    if (!guild) return res.json([]);
-
-    const categoryId = process.env.DISCORD_TICKET_CATEGORY_ID || '';
-    const ticketChannels = guild.channels.cache.filter((c) => c.parentId === categoryId && c.isTextBased());
-
-    const tickets = [];
-    for (const [, channel] of ticketChannels) {
-      const messages = await channel.messages.fetch({ limit: 10 });
-      tickets.push({
-        id: channel.id,
-        name: channel.name,
-        messages: messages.reverse().map((m) => ({
-          sender: m.author.username,
-          text: m.content,
-          time: m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-        })),
-      });
-    }
-
-    res.json(tickets);
-  });
-
-  app.post('/api/tickets/reply', async (req, res) => {
-    const { channelId, message } = req.body || {};
-    if (!bot.client) return res.status(503).json({ error: 'Bot hors ligne.' });
-    const channel = bot.client.channels.cache.get(channelId);
-
-    if (channel) {
-      await channel.send(`**[Staff Web]** ${message}`);
-      return res.json({ success: true });
-    }
-    res.status(404).json({ error: 'Salon introuvable' });
-  });
 
   const server = app.listen(PORT, HOST, () => {
     console.log(`🖥️  Dashboard disponible sur http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
