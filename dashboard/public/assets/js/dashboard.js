@@ -67,7 +67,8 @@ function escapeHtml(str) {
 const LAZY_LOADERS = { 
   stats: loadStats, 
   access: loadAdmins,
-  livechat: loadTickets 
+  livechat: loadTickets,
+  'open-tickets': loadOpenTickets,
 };
 const loadedViews = new Set(['overview']);
 
@@ -579,6 +580,50 @@ async function loadStats() {
 document.getElementById('export-csv-btn')?.addEventListener('click', () => {
   window.location.href = '/api/tickets/export.csv';
 });
+
+// ── Tickets ouverts ─────────────────────────────────────────
+function ticketStatusBadge(t) {
+  const base = 'display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;color:#fff;';
+  if (t.claimedByTag) {
+    return `<span style="${base}background:var(--green);">Pris en charge · ${escapeHtml(t.claimedByTag)}</span>`;
+  }
+  return `<span style="${base}background:var(--amber);">Ouvert · non pris en charge</span>`;
+}
+
+async function loadOpenTickets() {
+  const tbody = document.getElementById('open-tickets-list');
+  if (!tbody) return;
+
+  let tickets;
+  try {
+    tickets = await api('GET', '/api/tickets/open');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#e04b4b;padding:20px;">Erreur de chargement : ${escapeHtml(err.message)}</td></tr>`;
+    return;
+  }
+
+  if (!tickets.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#888;padding:20px;">Aucun ticket ouvert pour l'instant.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tickets
+    .map((t) => {
+      const discordLink =
+        t.guildId && t.channelId ? `https://discord.com/channels/${t.guildId}/${t.channelId}` : null;
+      return `
+        <tr>
+          <td class="mono">#${escapeHtml(t.id)}</td>
+          <td>${escapeHtml(t.userTag || 'inconnu')}</td>
+          <td>${escapeHtml(typeLabel(t.typeId))}</td>
+          <td>${ticketStatusBadge(t)}</td>
+          <td>${discordLink ? `<a class="btn-ghost" href="${discordLink}" target="_blank" rel="noopener">Ouvrir sur Discord</a>` : '—'}</td>
+        </tr>`;
+    })
+    .join('');
+}
+
+document.getElementById('refresh-open-tickets-btn')?.addEventListener('click', loadOpenTickets);
 
 // ── Accès admin ─────────────────────────────────────────────
 async function loadAdmins() {
