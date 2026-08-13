@@ -5,8 +5,8 @@ const express = require('express');
 const session = require('express-session');
 const MySQLStore = require('express-mysql-session')(session);
 
-const store = require('../lib/store');
-const bot = require('../lib/bot');
+const { globalStore, tenantManager } = require('../lib/store');
+const botManager = require('../lib/botManager');
 const { pool: db } = require('../lib/db');
 const { isValidEmoji } = require('../lib/config');
 const customerCodes = require('../lib/customerCodes');
@@ -14,38 +14,64 @@ const customerCodes = require('../lib/customerCodes');
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
 
-// ── Sessions stockées en MySQL ───────────────────────────────
-// Avant : session-file-store écrivait sur le disque local du conteneur,
-// qui est réinitialisé à chaque redeploy/redémarrage Render → tout le monde
-// était déconnecté et devait tout reconfigurer. Maintenant les sessions
-// (donc les connexions Discord des admins) survivent aux redeploys.
 const sessionStore = new MySQLStore({}, db);
 
 function readView(name) {
   return fs.readFileSync(path.join(VIEWS_DIR, 'public', name), 'utf8');
 }
 
+// ── Auth : vérifie juste qu'on a une session Discord + un tenantId ──
+// La vérification "est-il admin de CE tenant" est refaite dans
+// resolveTenant ci-dessous, une fois le TenantStore chargé, pour ne
+// jamais faire confiance à une valeur mise en cache dans la session.
 function requireAuth(req, res, next) {
-  if (req.session && req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return next();
+  if (req.session && req.session.discordUser && req.session.tenantId) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
   return res.redirect('/login');
 }
 
+// ── Résout le TenantStore + le BotController DU TENANT DE LA SESSION,
+// et re-vérifie l'appartenance admin à CE tenant précis à chaque requête.
+// C'est le garde-fou central qui remplace l'ancien `store.isAdmin()`
+// global : même si deux tenants existent, cette fonction ne peut
+// physiquement renvoyer que les données de req.session.tenantId.
+async function resolveTenant(req, res, next) {
+  try {
+    const tenantId = req.session.tenantId;
+    if (!tenantId) return res.status(401).json({ error: 'unauthorized' });
+
+    const store = await tenantManager.getStore(tenantId);
+    if (!store.isAdmin(req.session.discordUser.id)) {
+      // La session prétend appartenir à ce tenant mais n'y est plus admin
+      // (retiré entre-temps, etc.) → on coupe court plutôt que de servir
+      // les données d'un tenant auquel l'utilisateur n'a plus accès.
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    req.tenantStore = store;
+    req.tenantId = tenantId;
+    req.bot = botManager.get(tenantId, store);
+    next();
+  } catch (err) {
+    console.error('Erreur resolveTenant:', err.message);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+}
+
 function requireNoAuthAppYet(req, res, next) {
-  if (!store.hasAuthApp()) return next();
+  if (!globalStore.hasAuthApp()) return next();
   return res.redirect('/login');
 }
 
 function requireAuthAppSet(req, res, next) {
-  if (store.hasAuthApp()) return next();
+  if (globalStore.hasAuthApp()) return next();
   return res.redirect('/setup');
 }
 
-// Les tickets vivent désormais en MySQL (table `tickets`, gérée par
-// lib/ticketManager.js) plutôt que dans data/tickets.json.
-async function readTickets() {
+async function readTickets(tenantId) {
   try {
-    const [rows] = await db.query('SELECT data FROM tickets ORDER BY created_at DESC');
+    const [rows] = await db.query('SELECT data FROM tickets WHERE tenant_id = ? ORDER BY created_at DESC', [tenantId]);
     return rows.map((r) => JSON.parse(r.data));
   } catch (err) {
     console.error('Erreur lecture tickets MySQL:', err.message);
@@ -53,8 +79,8 @@ async function readTickets() {
   }
 }
 
-async function computeStats() {
-  const tickets = await readTickets();
+async function computeStats(tenantId) {
+  const tickets = await readTickets(tenantId);
   const total = tickets.length;
   const open = tickets.filter((t) => t.status === 'open').length;
   const closed = tickets.filter((t) => t.status === 'closed').length;
@@ -102,20 +128,13 @@ function toCsv(tickets) {
   return [headers.join(','), ...rows].join('\n');
 }
 
-// Décode un message Discord du salon ticket pour l'afficher dans la console
-// live. Les messages du joueur (envoyés en MP au bot) arrivent ici sous
-// forme d'EMBED posté par le bot (relayUserToStaff), pas en texte brut —
-// sans ce décodage, ils apparaissaient comme "Bot" avec un texte vide et le
-// message réel du joueur n'était jamais visible côté dashboard.
 function mapTicketMessage(m) {
   const time = m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-  // Message tapé directement par un staff dans le salon Discord.
   if (!m.author.bot) {
     return { sender: m.author.username, text: m.content, time, from: 'staff' };
   }
 
-  // Message envoyé depuis la console live du dashboard (texte brut préfixé).
   if (m.content.startsWith('**[Dashboard]')) {
     const match = m.content.match(/^\*\*\[Dashboard\]\s*(.+?)\s*:\*\*\s*([\s\S]*)$/);
     return {
@@ -126,9 +145,6 @@ function mapTicketMessage(m) {
     };
   }
 
-  // Message relayé automatiquement par le bot. Dans le salon staff, c'est
-  // toujours le message d'un joueur (relayUserToStaff) : son tag est dans
-  // embed.author.name, son texte dans embed.description.
   const embed = m.embeds?.[0];
   if (embed?.author?.name) {
     const isStaffRelay = embed.author.name.startsWith('Staff · ');
@@ -140,7 +156,6 @@ function mapTicketMessage(m) {
     };
   }
 
-  // Embed de notification système (ouverture/claim/fermeture du ticket).
   if (embed) {
     return { sender: 'Système', text: embed.title || embed.description || '[notification]', time, from: 'system' };
   }
@@ -155,7 +170,7 @@ function createDashboardServer() {
   app.use(
     session({
       store: sessionStore,
-      secret: store.getSessionSecret(),
+      secret: globalStore.getSessionSecret(),
       resave: false,
       saveUninitialized: false,
       rolling: true,
@@ -169,31 +184,23 @@ function createDashboardServer() {
 
   app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
 
-  // ── Healthcheck ──────────────────────────────────────────
-  // À pinger toutes les 5-10 min par un service externe gratuit (UptimeRobot,
-  // cron-job.org...) pour empêcher Render de mettre le service en veille sur
-  // le plan gratuit. Sans requête HTTP entrante, Render endort le process
-  // après ~15 min d'inactivité, ce qui coupe le bot avec.
   app.get('/healthz', (req, res) => {
-    res.json({ ok: true, bot: bot.getStatus().status, uptime: process.uptime() });
+    res.json({ ok: true, tenants: botManager.allControllers().length, uptime: process.uptime() });
   });
 
-  // ── Page d'accueil (offres + connexion) ─────────────────
-  // Accessible à tous, même sans être connecté : c'est la vitrine
-  // publique où on choisit son offre (Standard/Premium) et où on se
-  // connecte ensuite avec Discord pour accéder au dashboard.
   app.get('/accueil', (req, res) => {
     res.type('html').send(readView('index.html'));
   });
 
-  // ── Routing racine ─────────────────────────────────────
   app.get('/', (req, res) => {
-    if (!store.hasAuthApp()) return res.redirect('/setup');
-    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    if (!globalStore.hasAuthApp()) return res.redirect('/setup');
+    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     return res.redirect('/accueil');
   });
 
-  // ── Setup ──────────────────────────────────────────────
+  // ── Setup : configure l'app OAuth Discord UNIQUE utilisée pour le
+  // bouton "Se connecter" (PAS le bot d'un client — ça, c'est configuré
+  // individuellement par chaque tenant depuis son propre dashboard).
   app.get('/setup', requireNoAuthAppYet, (req, res) => {
     res.type('html').send(readView('setup.html'));
   });
@@ -208,18 +215,18 @@ function createDashboardServer() {
     if (!clientId || !clientSecret || !redirectUri) {
       return res.status(400).json({ error: "Client ID, Client Secret et Redirect URI sont obligatoires." });
     }
-    store.setAuthConfig({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), redirectUri: redirectUri.trim() });
+    globalStore.setAuthConfig({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), redirectUri: redirectUri.trim() });
     res.json({ ok: true });
   });
 
   // ── Login via Discord OAuth2 ────────────────────────────
   app.get('/login', requireAuthAppSet, (req, res) => {
-    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     res.type('html').send(readView('login.html'));
   });
 
   app.get('/api/auth/discord', requireAuthAppSet, (req, res) => {
-    const { clientId, redirectUri } = store.getAuthConfig();
+    const { clientId, redirectUri } = globalStore.getAuthConfig();
     const state = crypto.randomBytes(16).toString('hex');
     req.session.oauthState = state;
     const url = new URL('https://discord.com/oauth2/authorize');
@@ -239,7 +246,7 @@ function createDashboardServer() {
     }
     delete req.session.oauthState;
 
-    const { clientId, clientSecret, redirectUri } = store.getAuthConfig();
+    const { clientId, clientSecret, redirectUri } = globalStore.getAuthConfig();
 
     try {
       const tokenRes = await fetch(`${DISCORD_API}/oauth2/token`, {
@@ -262,11 +269,6 @@ function createDashboardServer() {
       if (!userRes.ok) throw new Error("Impossible de récupérer ton profil Discord.");
       const user = await userRes.json();
 
-      const isFirstEver = !store.hasAnyAdmin();
-      if (isFirstEver) {
-        store.addAdmin(user.id);
-      }
-
       const discordProfile = {
         id: user.id,
         username: user.global_name || user.username,
@@ -276,32 +278,33 @@ function createDashboardServer() {
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
 
-      // Pas encore admin (et pas le tout premier compte) → au lieu de
-      // rejeter direct, on l'envoie sur /activate pour saisir le code
-      // client reçu après paiement. L'accès admin n'est accordé qu'une
-      // fois le code validé (voir POST /api/activate).
-      if (!store.isAdmin(user.id)) {
+      // ── C'est ICI que se joue tout le fix ────────────────────────
+      // On cherche à QUEL TENANT appartient ce discord_id (table
+      // tenant_admins), et jamais à une liste globale unique. Si ce
+      // discord_id n'appartient à aucun tenant, ce n'est PAS le CEO
+      // qu'on lui montre : on l'envoie sur /activate créer SON PROPRE
+      // tenant, vierge, via un code client.
+      const tenantId = await tenantManager.findTenantIdForDiscordUser(user.id);
+
+      if (!tenantId) {
         req.session.pendingUser = discordProfile;
         return res.redirect('/activate');
       }
 
       req.session.discordUser = discordProfile;
+      req.session.tenantId = tenantId;
 
-      // ── SAUVEGARDE EN BASE DE DONNÉES (SQL) ────────────────
       try {
-        // 1. Ajouter ou Mettre à jour l'utilisateur
         await db.query(
-          `INSERT INTO users (discord_id, username) VALUES (?, ?)
-           ON DUPLICATE KEY UPDATE username = VALUES(username)`,
-          [user.id, user.global_name || user.username]
+          `INSERT INTO users (discord_id, username, tenant_id) VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE username = VALUES(username), tenant_id = VALUES(tenant_id)`,
+          [user.id, user.global_name || user.username, tenantId]
         );
 
-        // Récupérer l'ID de l'utilisateur en BDD
         const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [user.id]);
         const dbUserId = userRows[0].id;
         req.session.discordUser.dbId = dbUserId;
 
-        // 2. Enregistrer le log de connexion
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         await db.query(
           `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
@@ -319,11 +322,10 @@ function createDashboardServer() {
   });
 
   // ── Activation du code client (après paiement) ──────────
-  // Étape intermédiaire entre "connecté à Discord" et "admin sur le
-  // dashboard" : le client entre le code reçu après son paiement
-  // Revolut/PayPal pour débloquer son accès.
+  // Un code valide crée désormais un TENANT NEUF (dashboard vierge),
+  // au lieu d'ajouter l'utilisateur à la liste d'admins globale du CEO.
   app.get('/activate', requireAuthAppSet, (req, res) => {
-    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     if (!req.session.pendingUser) return res.redirect('/login');
     res.type('html').send(readView('activate.html'));
   });
@@ -351,9 +353,14 @@ function createDashboardServer() {
         return res.status(400).json({ error: messages[result.reason] || 'Code invalide.' });
       }
 
-      // Code valide → on accorde l'accès admin et on termine la connexion.
-      store.addAdmin(pending.id);
+      // Code valide → on crée un TENANT NEUF et isolé pour ce client,
+      // avec des settings par défaut (data/settings.default.json), et
+      // CE client devient admin de CE tenant uniquement.
+      const tenantId = await tenantManager.createTenantForDiscordUser(pending.id, pending.username);
+      const store = await tenantManager.getStore(tenantId);
+
       req.session.discordUser = pending;
+      req.session.tenantId = tenantId;
       delete req.session.pendingUser;
 
       if (result.planType) {
@@ -361,10 +368,11 @@ function createDashboardServer() {
       }
 
       try {
+        await db.query('UPDATE customer_codes SET tenant_id = ? WHERE code = ?', [tenantId, customerCodes.normalizeCode(code)]);
         await db.query(
-          `INSERT INTO users (discord_id, username) VALUES (?, ?)
-           ON DUPLICATE KEY UPDATE username = VALUES(username)`,
-          [pending.id, pending.username]
+          `INSERT INTO users (discord_id, username, tenant_id) VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE username = VALUES(username), tenant_id = VALUES(tenant_id)`,
+          [pending.id, pending.username, tenantId]
         );
         const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [pending.id]);
         const dbUserId = userRows[0].id;
@@ -375,7 +383,7 @@ function createDashboardServer() {
           [dbUserId, ip, req.headers['user-agent'] || '']
         );
       } catch (sqlErr) {
-        console.error('Erreur SQL lors de l\'activation :', sqlErr.message);
+        console.error("Erreur SQL lors de l'activation :", sqlErr.message);
       }
 
       res.json({ ok: true });
@@ -385,8 +393,7 @@ function createDashboardServer() {
     }
   });
 
-  // Liste des codes clients (admin) — pour suivre ce qui a été utilisé.
-  app.get('/api/admin/customer-codes', requireAuth, async (req, res) => {
+  app.get('/api/admin/customer-codes', requireAuth, resolveTenant, async (req, res) => {
     try {
       const codes = await customerCodes.listCodes();
       res.json({ codes });
@@ -410,22 +417,23 @@ function createDashboardServer() {
     req.session.destroy(() => res.json({ ok: true }));
   });
 
-  // ── Dashboard (protégé) ────────────────────────────────
+  // ── Dashboard (protégé, scopé au tenant de la session) ──────────
   app.get('/dashboard', requireAuthAppSet, requireAuth, (req, res) => {
     res.type('html').send(readView('dashboard.html'));
   });
 
-  // ── API protégée ────────────────────────────────────────
+  // ── API protégée : requireAuth (session valide) PUIS resolveTenant
+  // (charge le TenantStore + BotController du tenant de CETTE session,
+  // et re-vérifie l'admin sur CE tenant). Toute route ci-dessous utilise
+  // req.tenantStore / req.bot / req.tenantId — jamais un store global.
   const api = express.Router();
-  api.use(requireAuth);
+  api.use(requireAuth, resolveTenant);
 
   api.get('/me', (req, res) => {
-    res.json({ user: req.session.discordUser, admins: store.getAuthConfig().adminIds });
+    res.json({ user: req.session.discordUser, admins: req.tenantStore.getAdminIds() });
   });
 
-  // ── 🔧 ROUTES API FIVEM & CONFIGURATION SQL ─────────────
-
-  // Obtenir la configuration utilisateur depuis SQL
+  // ── FiveM (déjà correctement scopé par dbUserId, inchangé) ───────
   api.get('/fivem/config', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -444,7 +452,6 @@ function createDashboardServer() {
     }
   });
 
-  // Sauvegarder la configuration FiveM dans SQL
   api.post('/fivem/config', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -463,42 +470,29 @@ function createDashboardServer() {
     }
   });
 
-  // Liste des bannis FiveM (depuis le serveur FiveM ou données par défaut)
   api.get('/fivem/bans', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
       const [rows] = await db.query('SELECT fivem_url FROM user_configs WHERE user_id = ?', [dbUserId]);
-
-      if (!rows.length || !rows[0].fivem_url) {
-        return res.json([]);
-      }
-
-      // Exemple : Si vous avez un endpoint d'API externe sur votre serveur FiveM pour récupérer les bans :
-      /*
-      const fetch = require('node-fetch');
-      const response = await fetch(`${rows[0].fivem_url}/bans.json`);
-      const bans = await response.json();
-      return res.json(bans);
-      */
-
-      // Envoi de données si tout est configuré correctement
+      if (!rows.length || !rows[0].fivem_url) return res.json([]);
       res.json([]);
     } catch (err) {
       res.status(500).json({ error: "Erreur lors de la récupération des bannis." });
     }
   });
 
-  // ── Routes d'origine de l'application ─────────────────
+  // ── Statut / settings / ticket types : tout passe par req.tenantStore
+  // et req.bot (résolus pour CE tenant uniquement par resolveTenant) ──
   api.get('/status', (req, res) => {
-    res.json(bot.getStatus());
+    res.json(req.bot.getStatus());
   });
 
   api.get('/settings', (req, res) => {
-    const b = store.getBot();
+    const b = req.tenantStore.getBot();
     res.json({
       bot: { ...b, token: b.token ? maskToken(b.token) : '' },
       hasToken: !!b.token,
-      ticketTypes: store.getTicketTypes(),
+      ticketTypes: req.tenantStore.getTicketTypes(),
     });
   });
 
@@ -506,18 +500,15 @@ function createDashboardServer() {
     const patch = { ...req.body };
     const isTokenChange = !!(patch.token && !patch.token.includes('•'));
     if (patch.token && patch.token.includes('•')) delete patch.token;
-    const updated = store.setBot(patch);
+    const updated = req.tenantStore.setBot(patch);
 
-    // Si on ne touche pas au token, le bot (s'il est en ligne) n'a pas besoin
-    // de se reconnecter : on peut republier le panel tout de suite et renvoyer
-    // le vrai résultat au dashboard. Avant, cette republication se faisait en
-    // tâche de fond via l'event `botSettingsChanged` sans jamais informer
-    // l'admin en cas d'échec (salon supprimé, permissions manquantes...).
-    // Si le token vient de changer, le bot doit d'abord se reconnecter
-    // (asynchrone, cf. `_onBotSettingsChanged`) donc on ne tente rien ici.
     let panel = null;
     if (!isTokenChange) {
-      panel = await bot.refreshPanel();
+      panel = await req.bot.refreshPanel();
+    } else if (patch.token) {
+      // Premier token renseigné (ou changé) : on démarre/relance CE bot,
+      // et lui seul — pas celui d'un autre tenant.
+      await req.bot.restart();
     }
 
     res.json({
@@ -535,10 +526,6 @@ function createDashboardServer() {
       if (!t.id || !t.label || !t.emoji) {
         return res.status(400).json({ error: 'Chaque type de ticket doit avoir un id, un label et un emoji.' });
       }
-      // Avant : aucune validation de l'emoji ici. Un emoji invalide (texte
-      // libre, ZWJ cassé...) n'était détecté qu'au moment d'envoyer le panel
-      // sur Discord, avec une erreur "COMPONENT_INVALID_EMOJI" qui bloquait
-      // TOUT le panel — pas seulement le type de ticket concerné.
       if (!isValidEmoji(t.emoji)) {
         return res.status(400).json({
           error: `Emoji invalide pour "${t.label}" : "${t.emoji}". Utilise un emoji Unicode (ex: 🎫) ou un emoji personnalisé du serveur (ex: <:nom:1234567890>).`,
@@ -550,35 +537,31 @@ function createDashboardServer() {
       return res.status(400).json({ error: 'Les identifiants de types de tickets doivent être uniques.' });
     }
 
-    const saved = store.setTicketTypes(types);
+    const saved = req.tenantStore.setTicketTypes(types);
     res.json({ ok: true, ticketTypes: saved });
   });
 
   api.post('/bot/restart', async (req, res) => {
-    await bot.restart();
-    res.json({ ok: true, status: bot.getStatus() });
+    await req.bot.restart();
+    res.json({ ok: true, status: req.bot.getStatus() });
   });
 
   api.post('/bot/refresh-panel', async (req, res) => {
-    // Avant : le résultat de bot.refreshPanel() (qui renvoie { ok, reason }
-    // en cas d'échec — bot hors ligne, salon supprimé, permissions...) était
-    // ignoré, et on répondait toujours { ok: true }. Le dashboard affichait
-    // donc "Panel republié" même quand rien n'avait été envoyé.
-    const result = await bot.refreshPanel();
+    const result = await req.bot.refreshPanel();
     if (!result.ok) return res.status(400).json({ error: result.reason });
     res.json({ ok: true });
   });
 
   api.get('/discord/guilds', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') return res.json([]);
-    const guilds = [...bot.client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name }));
+    if (!req.bot.client || req.bot.status !== 'online') return res.json([]);
+    const guilds = [...req.bot.client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name }));
     res.json(guilds);
   });
 
   api.get('/discord/guilds/:guildId/channels', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') return res.json([]);
+    if (!req.bot.client || req.bot.status !== 'online') return res.json([]);
     try {
-      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const guild = await req.bot.client.guilds.fetch(req.params.guildId);
       const channels = await guild.channels.fetch();
       const textChannels = [...channels.values()]
         .filter((c) => c && c.type === 0)
@@ -590,9 +573,9 @@ function createDashboardServer() {
   });
 
   api.get('/discord/guilds/:guildId/categories', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') return res.json([]);
+    if (!req.bot.client || req.bot.status !== 'online') return res.json([]);
     try {
-      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const guild = await req.bot.client.guilds.fetch(req.params.guildId);
       const channels = await guild.channels.fetch();
       const categories = [...channels.values()]
         .filter((c) => c && c.type === 4)
@@ -604,9 +587,9 @@ function createDashboardServer() {
   });
 
   api.get('/discord/guilds/:guildId/roles', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') return res.json([]);
+    if (!req.bot.client || req.bot.status !== 'online') return res.json([]);
     try {
-      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const guild = await req.bot.client.guilds.fetch(req.params.guildId);
       const roles = await guild.roles.fetch();
       const list = [...roles.values()]
         .filter((r) => r.id !== guild.id)
@@ -619,13 +602,11 @@ function createDashboardServer() {
   });
 
   api.get('/stats', async (req, res) => {
-    res.json(await computeStats());
+    res.json(await computeStats(req.tenantId));
   });
 
-  // Alimente l'onglet "Tickets Ouverts" du dashboard (jusqu'ici jamais
-  // appelé côté front, donc la liste restait vide en permanence).
   api.get('/tickets/open', async (req, res) => {
-    const tickets = await readTickets();
+    const tickets = await readTickets(req.tenantId);
     const open = tickets
       .filter((t) => t.status === 'open')
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
@@ -643,17 +624,16 @@ function createDashboardServer() {
     res.json(open);
   });
 
-  // ── Console live (répondre aux tickets sans quitter le dashboard) ──
   api.get('/tickets/:id/messages', async (req, res) => {
-    if (!bot.client || bot.status !== 'online') {
+    if (!req.bot.client || req.bot.status !== 'online') {
       return res.status(503).json({ error: 'Le bot est hors ligne, impossible de lire les messages.' });
     }
     try {
-      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
       if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
       const ticket = JSON.parse(rows[0].data);
 
-      const channel = await bot.client.channels.fetch(ticket.channelId);
+      const channel = await req.bot.client.channels.fetch(ticket.channelId);
       const messages = await channel.messages.fetch({ limit: 30 });
       const list = [...messages.values()].reverse().map((m) => mapTicketMessage(m));
 
@@ -667,19 +647,19 @@ function createDashboardServer() {
   });
 
   api.post('/tickets/:id/reply', async (req, res) => {
-    if (!bot.client || bot.status !== 'online' || !bot.ticketManager) {
-      return res.status(503).json({ error: 'Le bot est hors ligne, impossible d\'envoyer un message.' });
+    if (!req.bot.client || req.bot.status !== 'online' || !req.bot.ticketManager) {
+      return res.status(503).json({ error: "Le bot est hors ligne, impossible d'envoyer un message." });
     }
     const message = String(req.body?.message || '').trim();
     if (!message) return res.status(400).json({ error: 'Message vide.' });
 
     try {
-      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
       if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
       const ticket = JSON.parse(rows[0].data);
 
       const staffLabel = req.session.discordUser?.username || 'Staff';
-      await bot.ticketManager.sendDashboardReply(ticket, staffLabel, message);
+      await req.bot.ticketManager.sendDashboardReply(ticket, staffLabel, message);
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -687,7 +667,7 @@ function createDashboardServer() {
   });
 
   api.get('/tickets/export.csv', async (req, res) => {
-    const tickets = await readTickets();
+    const tickets = await readTickets(req.tenantId);
     const csv = toCsv(tickets);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="tickets-${Date.now()}.csv"`);
@@ -695,21 +675,30 @@ function createDashboardServer() {
   });
 
   api.get('/admins', (req, res) => {
-    res.json({ adminIds: store.getAuthConfig().adminIds, selfId: req.session.discordUser.id });
+    res.json({ adminIds: req.tenantStore.getAdminIds(), selfId: req.session.discordUser.id });
   });
 
-  api.post('/admins', (req, res) => {
+  api.post('/admins', async (req, res) => {
     const id = String(req.body?.discordId || '').trim();
     if (!/^\d{15,25}$/.test(id)) return res.status(400).json({ error: "ID Discord invalide (identifiant numérique attendu)." });
-    store.addAdmin(id);
-    res.json({ ok: true, adminIds: store.getAuthConfig().adminIds });
+
+    // Un discord_id ne peut appartenir qu'à un seul tenant : on refuse
+    // d'ajouter comme admin quelqu'un qui gère déjà un autre dashboard,
+    // plutôt que de le faire basculer silencieusement vers celui-ci.
+    const existingTenant = await tenantManager.findTenantIdForDiscordUser(id);
+    if (existingTenant && existingTenant !== req.tenantId) {
+      return res.status(400).json({ error: 'Cet identifiant Discord est déjà administrateur sur un autre dashboard.' });
+    }
+
+    await tenantManager.addAdminToTenant(req.tenantId, id);
+    res.json({ ok: true, adminIds: req.tenantStore.getAdminIds() });
   });
 
-  api.delete('/admins/:id', (req, res) => {
-    const { adminIds } = store.getAuthConfig();
+  api.delete('/admins/:id', async (req, res) => {
+    const adminIds = req.tenantStore.getAdminIds();
     if (adminIds.length <= 1) return res.status(400).json({ error: 'Impossible de retirer le dernier administrateur.' });
-    store.removeAdmin(req.params.id);
-    res.json({ ok: true, adminIds: store.getAuthConfig().adminIds });
+    await tenantManager.removeAdminFromTenant(req.tenantId, req.params.id);
+    res.json({ ok: true, adminIds: req.tenantStore.getAdminIds() });
   });
 
   app.use('/api', api);
