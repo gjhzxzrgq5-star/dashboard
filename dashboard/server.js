@@ -9,6 +9,7 @@ const store = require('../lib/store');
 const bot = require('../lib/bot');
 const { pool: db } = require('../lib/db');
 const { isValidEmoji } = require('../lib/config');
+const customerCodes = require('../lib/customerCodes');
 
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -266,11 +267,7 @@ function createDashboardServer() {
         store.addAdmin(user.id);
       }
 
-      if (!store.isAdmin(user.id)) {
-        return res.type('html').send(authErrorPage("Ton compte Discord n'a pas accès à ce dashboard. Demande à un administrateur existant de t'ajouter."));
-      }
-
-      req.session.discordUser = {
+      const discordProfile = {
         id: user.id,
         username: user.global_name || user.username,
         handle: user.discriminator && user.discriminator !== '0' ? `${user.username}#${user.discriminator}` : user.username,
@@ -278,6 +275,17 @@ function createDashboardServer() {
           ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
+
+      // Pas encore admin (et pas le tout premier compte) → au lieu de
+      // rejeter direct, on l'envoie sur /activate pour saisir le code
+      // client reçu après paiement. L'accès admin n'est accordé qu'une
+      // fois le code validé (voir POST /api/activate).
+      if (!store.isAdmin(user.id)) {
+        req.session.pendingUser = discordProfile;
+        return res.redirect('/activate');
+      }
+
+      req.session.discordUser = discordProfile;
 
       // ── SAUVEGARDE EN BASE DE DONNÉES (SQL) ────────────────
       try {
@@ -307,6 +315,83 @@ function createDashboardServer() {
     } catch (err) {
       console.error('Erreur OAuth Discord:', err.message);
       res.type('html').send(authErrorPage(`Connexion Discord échouée : ${err.message}`));
+    }
+  });
+
+  // ── Activation du code client (après paiement) ──────────
+  // Étape intermédiaire entre "connecté à Discord" et "admin sur le
+  // dashboard" : le client entre le code reçu après son paiement
+  // Revolut/PayPal pour débloquer son accès.
+  app.get('/activate', requireAuthAppSet, (req, res) => {
+    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    if (!req.session.pendingUser) return res.redirect('/login');
+    res.type('html').send(readView('activate.html'));
+  });
+
+  app.get('/api/activate/me', (req, res) => {
+    if (!req.session.pendingUser) return res.status(401).json({ error: 'no_pending_user' });
+    res.json({ user: req.session.pendingUser });
+  });
+
+  app.post('/api/activate', async (req, res) => {
+    if (!req.session.pendingUser) return res.status(401).json({ error: 'no_pending_user' });
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'Merci de saisir ton code client.' });
+
+    const pending = req.session.pendingUser;
+
+    try {
+      const result = await customerCodes.redeemCode(code, pending.id, pending.username);
+      if (!result.ok) {
+        const messages = {
+          not_found: "Ce code client n'existe pas. Vérifie ta saisie.",
+          already_used: 'Ce code a déjà été utilisé.',
+          empty: 'Merci de saisir ton code client.',
+        };
+        return res.status(400).json({ error: messages[result.reason] || 'Code invalide.' });
+      }
+
+      // Code valide → on accorde l'accès admin et on termine la connexion.
+      store.addAdmin(pending.id);
+      req.session.discordUser = pending;
+      delete req.session.pendingUser;
+
+      if (result.planType) {
+        store.setSubscription({ planType: result.planType, active: true });
+      }
+
+      try {
+        await db.query(
+          `INSERT INTO users (discord_id, username) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE username = VALUES(username)`,
+          [pending.id, pending.username]
+        );
+        const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [pending.id]);
+        const dbUserId = userRows[0].id;
+        req.session.discordUser.dbId = dbUserId;
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
+          [dbUserId, ip, req.headers['user-agent'] || '']
+        );
+      } catch (sqlErr) {
+        console.error('Erreur SQL lors de l\'activation :', sqlErr.message);
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('Erreur activation code client:', err.message);
+      res.status(500).json({ error: "Erreur serveur, réessaie dans un instant." });
+    }
+  });
+
+  // Liste des codes clients (admin) — pour suivre ce qui a été utilisé.
+  app.get('/api/admin/customer-codes', requireAuth, async (req, res) => {
+    try {
+      const codes = await customerCodes.listCodes();
+      res.json({ codes });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 
