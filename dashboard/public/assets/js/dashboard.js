@@ -1,924 +1,611 @@
-// ── État global ───────────────────────────────────────────
-let state = {
-  bot: {},
-  ticketTypes: [],
-  guilds: [],
-  panelChannels: [],
-  staffCategories: [],
-  staffRoles: [],
-  me: null,
-  admins: [],
-};
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const express = require('express');
+const session = require('express-session');
+const MySQLStore = require('express-mysql-session')(session);
 
-// ── Utilitaires ───────────────────────────────────────────
-async function api(method, url, body) {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (res.status === 401) {
-    window.location.href = '/login';
-    throw new Error('unauthorized');
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
-  return data;
+const store = require('../lib/store');
+const bot = require('../lib/bot');
+const { pool: db } = require('../lib/db');
+
+const VIEWS_DIR = __dirname;
+const DISCORD_API = 'https://discord.com/api/v10';
+
+// ── Sessions stockées en MySQL ───────────────────────────────
+// Avant : session-file-store écrivait sur le disque local du conteneur,
+// qui est réinitialisé à chaque redeploy/redémarrage Render → tout le monde
+// était déconnecté et devait tout reconfigurer. Maintenant les sessions
+// (donc les connexions Discord des admins) survivent aux redeploys.
+const sessionStore = new MySQLStore({}, db);
+
+function readView(name) {
+  return fs.readFileSync(path.join(VIEWS_DIR, 'public', name), 'utf8');
 }
 
-let toastTimer;
-function toast(message, isError = false) {
-  const el = document.getElementById('toast');
-  if (!el) return;
-  el.textContent = message;
-  el.classList.toggle('error', isError);
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+function requireAuth(req, res, next) {
+  if (req.session && req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
+  return res.redirect('/login');
 }
 
-function fillSelect(select, items, { value, label, placeholder }) {
-  if (!select) return;
-  const current = select.value;
-  select.innerHTML = '';
-  if (placeholder) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = placeholder;
-    select.appendChild(opt);
-  }
-  for (const item of items) {
-    const opt = document.createElement('option');
-    opt.value = value(item);
-    opt.textContent = label(item);
-    select.appendChild(opt);
-  }
-  if ([...select.options].some((o) => o.value === current)) select.value = current;
+function requireNoAuthAppYet(req, res, next) {
+  if (!store.hasAuthApp()) return next();
+  return res.redirect('/login');
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+function requireAuthAppSet(req, res, next) {
+  if (store.hasAuthApp()) return next();
+  return res.redirect('/setup');
 }
 
-// ── LAZY LOADING DES VUES & NAVIGATION ────────────────────
-const LAZY_LOADERS = { 
-  stats: loadStats, 
-  access: loadAdmins,
-  livechat: loadTickets,
-  'open-tickets': loadOpenTickets,
-};
-const loadedViews = new Set(['overview']);
-
-function initNavigation() {
-  document.querySelectorAll('.nav-item').forEach((item) => {
-    item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
-      document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-      
-      item.classList.add('active');
-      const viewName = item.dataset.view;
-      const targetView = document.getElementById(`view-${viewName}`);
-      if (targetView) targetView.classList.add('active');
-
-      if (!loadedViews.has(viewName) && LAZY_LOADERS[viewName]) {
-        loadedViews.add(viewName);
-        LAZY_LOADERS[viewName]();
-      }
-    });
-  });
-}
-
-document.getElementById('logout-btn')?.addEventListener('click', async () => {
-  await api('POST', '/api/logout');
-  window.location.href = '/login';
-});
-
-// ── Utilisateur connecté (Discord) ─────────────────────────
-async function loadMe() {
+// Les tickets vivent désormais en MySQL (table `tickets`, gérée par
+// lib/ticketManager.js) plutôt que dans data/tickets.json.
+async function readTickets() {
   try {
-    const data = await api('GET', '/api/me');
-    state.me = data.user;
-    state.admins = data.admins;
-    const avatar = document.getElementById('user-avatar');
-    const name = document.getElementById('user-name');
-    if (avatar) avatar.src = data.user.avatar;
-    if (name) name.textContent = data.user.username;
-  } catch {}
-}
-
-// ── Statut du bot ─────────────────────────────────────────
-const STATUS_LABELS = {
-  online: 'En ligne',
-  connecting: 'Connexion…',
-  offline: 'Hors ligne',
-  error: 'Erreur',
-};
-
-async function refreshStatus() {
-  try {
-    const s = await api('GET', '/api/status');
-    const dot = document.getElementById('status-dot');
-    const text = document.getElementById('status-text');
-    if (dot) dot.className = `status-dot ${s.status}`;
-    if (text) text.textContent = STATUS_LABELS[s.status] || s.status;
-
-    const lines = [];
-    lines.push(`<strong>Statut :</strong> ${STATUS_LABELS[s.status] || s.status}`);
-    if (s.tag) lines.push(`<strong>Compte :</strong> <span class="mono">${escapeHtml(s.tag)}</span>`);
-    if (s.guildCount) lines.push(`<strong>Serveurs :</strong> ${s.guildCount}`);
-    if (s.ping !== null && s.ping >= 0) lines.push(`<strong>Latence :</strong> ${s.ping} ms`);
-    if (s.lastError) lines.push(`<strong style="color:var(--coral)">Dernière erreur :</strong> ${escapeHtml(s.lastError)}`);
-    
-    const overviewStatus = document.getElementById('overview-status');
-    if (overviewStatus) overviewStatus.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
-  } catch {}
-}
-
-// ── Chargement des settings ───────────────────────────────
-async function loadSettings() {
-  const data = await api('GET', '/api/settings');
-  state.bot = data.bot;
-  state.ticketTypes = data.ticketTypes;
-
-  const tokenInput = document.getElementById('input-token');
-  if (tokenInput) tokenInput.placeholder = data.hasToken ? data.bot.token : 'Colle ton token ici';
-
-  const setInputValue = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val || '';
-  };
-
-  setInputValue('input-panel-title', data.bot.panelTitle);
-  setInputValue('input-panel-desc', data.bot.panelDescription);
-  setInputValue('input-panel-banner', data.bot.panelBanner);
-  setInputValue('input-embed-color', data.bot.embedColor);
-  setInputValue('input-footer', data.bot.footerText);
-
-  renderTicketTypes();
-}
-
-async function loadGuilds() {
-  state.guilds = await api('GET', '/api/discord/guilds');
-
-  const panelGuildSelect = document.getElementById('select-panel-guild');
-  const staffGuildSelect = document.getElementById('select-staff-guild');
-
-  const opts = { value: (g) => g.id, label: (g) => g.name, placeholder: 'Sélectionner un serveur…' };
-  fillSelect(panelGuildSelect, state.guilds, opts);
-  fillSelect(staffGuildSelect, state.guilds, opts);
-
-  if (panelGuildSelect) panelGuildSelect.value = state.bot.panelGuildId || '';
-  if (staffGuildSelect) staffGuildSelect.value = state.bot.staffGuildId || '';
-
-  if (state.guilds.length === 0) {
-    toast("Le bot n'est connecté à aucun serveur pour l'instant.", true);
-  }
-
-  await Promise.all([onPanelGuildChange(false), onStaffGuildChange(false)]);
-}
-
-async function onPanelGuildChange(fromUser = true) {
-  const guildSelect = document.getElementById('select-panel-guild');
-  const channelSelect = document.getElementById('select-panel-channel');
-  if (!guildSelect || !channelSelect) return;
-
-  const guildId = guildSelect.value;
-  if (!guildId) return fillSelect(channelSelect, [], { value: () => '', label: () => '', placeholder: 'Choisis un serveur d\'abord' });
-
-  state.panelChannels = await api('GET', `/api/discord/guilds/${guildId}/channels`);
-  fillSelect(channelSelect, state.panelChannels, {
-    value: (c) => c.id,
-    label: (c) => `#${c.name}`,
-    placeholder: 'Sélectionner un salon…',
-  });
-  if (!fromUser) channelSelect.value = state.bot.panelChannelId || '';
-  else channelSelect.value = '';
-}
-
-async function onStaffGuildChange(fromUser = true) {
-  const guildSelect = document.getElementById('select-staff-guild');
-  const categorySelect = document.getElementById('select-staff-category');
-  if (!guildSelect || !categorySelect) return;
-
-  const guildId = guildSelect.value;
-  if (!guildId) {
-    fillSelect(categorySelect, [], { value: () => '', label: () => '', placeholder: 'Choisis un serveur d\'abord' });
-    state.staffRoles = [];
-    state.staffCategories = [];
-    renderTicketTypes();
-    return;
-  }
-
-  const [categories, roles] = await Promise.all([
-    api('GET', `/api/discord/guilds/${guildId}/categories`),
-    api('GET', `/api/discord/guilds/${guildId}/roles`),
-  ]);
-
-  state.staffCategories = categories;
-  state.staffRoles = roles;
-
-  fillSelect(categorySelect, categories, {
-    value: (c) => c.id,
-    label: (c) => c.name,
-    placeholder: 'Aucune catégorie (Par défaut)',
-  });
-  if (!fromUser) categorySelect.value = state.bot.staffCategoryId || '';
-  else categorySelect.value = '';
-
-  renderTicketTypes();
-}
-
-document.getElementById('select-panel-guild')?.addEventListener('change', () => onPanelGuildChange(true));
-document.getElementById('select-staff-guild')?.addEventListener('change', () => onStaffGuildChange(true));
-
-// ── Enregistrement token & config ─────────────────────────
-document.getElementById('save-token-btn')?.addEventListener('click', async () => {
-  const token = document.getElementById('input-token').value.trim();
-  if (!token) return toast('Colle un token avant de sauvegarder.', true);
-  try {
-    await api('POST', '/api/settings/bot', { token });
-    toast('Token enregistré, connexion en cours…');
-    document.getElementById('input-token').value = '';
-    setTimeout(async () => {
-      await loadSettings();
-      await loadGuilds();
-    }, 2500);
+    const [rows] = await db.query('SELECT data FROM tickets ORDER BY created_at DESC');
+    return rows.map((r) => JSON.parse(r.data));
   } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-document.getElementById('save-general-btn')?.addEventListener('click', async () => {
-  const patch = {
-    panelGuildId: document.getElementById('select-panel-guild').value,
-    panelChannelId: document.getElementById('select-panel-channel').value,
-    staffGuildId: document.getElementById('select-staff-guild').value,
-    staffCategoryId: document.getElementById('select-staff-category').value,
-    panelTitle: document.getElementById('input-panel-title').value,
-    panelDescription: document.getElementById('input-panel-desc').value,
-    panelBanner: document.getElementById('input-panel-banner').value,
-    embedColor: document.getElementById('input-embed-color').value.replace('#', ''),
-    footerText: document.getElementById('input-footer').value,
-  };
-  try {
-    const res = await api('POST', '/api/settings/bot', patch);
-    state.bot = { ...state.bot, ...res.bot };
-    toast('Configuration enregistrée.');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-// ── Actions rapides ────────────────────────────────────────
-document.getElementById('refresh-panel-btn')?.addEventListener('click', async () => {
-  try {
-    await api('POST', '/api/bot/refresh-panel');
-    toast('Panel republié.');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-document.getElementById('restart-bot-btn')?.addEventListener('click', async () => {
-  try {
-    toast('Reconnexion en cours…');
-    await api('POST', '/api/bot/restart');
-    setTimeout(refreshStatus, 1500);
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-// ── Types de tickets ───────────────────────────────────────
-function roleNameById(id) {
-  const r = state.staffRoles.find((r) => r.id === id);
-  return r ? r.name : id;
-}
-
-function categoryNameById(id) {
-  const c = state.staffCategories.find((cat) => cat.id === id);
-  return c ? c.name : null;
-}
-
-function renderTicketTypes() {
-  const container = document.getElementById('types-list');
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (state.ticketTypes.length === 0) {
-    container.innerHTML = `<div class="empty-state"><div class="icon">🎟️</div>Aucun type de ticket. Clique sur "+ Nouveau type" pour commencer.</div>`;
-    return;
-  }
-
-  for (const type of state.ticketTypes) {
-    const el = document.createElement('div');
-    el.className = 'ticket-stub';
-    const roleChips = (type.allowedRoles || [])
-      .map((rid) => `<span class="role-chip">${escapeHtml(roleNameById(rid))}</span>`)
-      .join('');
-
-    const specificCategory = type.categoryId ? categoryNameById(type.categoryId) : null;
-    const catBadge = specificCategory 
-      ? `<span class="badge-ultra" style="margin-left:8px;">📁 ${escapeHtml(specificCategory)}</span>` 
-      : '';
-
-    el.innerHTML = `
-      <div class="stub-emoji">${escapeHtml(type.emoji) || '🎫'}</div>
-      <div class="stub-body">
-        <div class="stub-title-row">
-          <span class="color-dot" style="background:#${(type.color || '5865F2').replace('#', '')}"></span>
-          <span class="stub-title">${escapeHtml(type.label)}</span>
-          <span class="stub-id mono">${escapeHtml(type.id)}</span>
-          ${catBadge}
-        </div>
-        <div class="stub-desc">${escapeHtml(type.description || '')}</div>
-        <div class="stub-roles">${roleChips || '<span class="field-hint">Aucun rôle assigné — personne ne verra ce ticket.</span>'}</div>
-      </div>
-      <div class="stub-actions">
-        <button class="btn-ghost edit-type-btn">✏️ Modifier</button>
-      </div>
-    `;
-    el.querySelector('.edit-type-btn').addEventListener('click', () => openTypeModal(type));
-    container.appendChild(el);
+    console.error('Erreur lecture tickets MySQL:', err.message);
+    return [];
   }
 }
 
-// ── Modal type de ticket ───────────────────────────────────
-let selectedRoleIds = new Set();
+async function computeStats() {
+  const tickets = await readTickets();
+  const total = tickets.length;
+  const open = tickets.filter((t) => t.status === 'open').length;
+  const closed = tickets.filter((t) => t.status === 'closed').length;
 
-function renderRolesPicker() {
-  const picker = document.getElementById('type-roles-picker');
-  if (!picker) return;
-  picker.innerHTML = '';
-
-  if (state.staffRoles.length === 0) {
-    picker.innerHTML = `<span class="field-hint">Aucun rôle disponible — sélectionne d'abord un serveur staff connecté dans "Configuration générale".</span>`;
-    return;
+  const byType = {};
+  for (const t of tickets) {
+    byType[t.typeId] = (byType[t.typeId] || 0) + 1;
   }
 
-  for (const role of state.staffRoles) {
-    const label = document.createElement('label');
-    label.className = 'role-option' + (selectedRoleIds.has(role.id) ? ' selected' : '');
-    label.innerHTML = `<input type="checkbox" value="${role.id}" ${selectedRoleIds.has(role.id) ? 'checked' : ''}> ${escapeHtml(role.name)}`;
-    label.querySelector('input').addEventListener('change', (e) => {
-      if (e.target.checked) selectedRoleIds.add(role.id);
-      else selectedRoleIds.delete(role.id);
-      label.classList.toggle('selected', e.target.checked);
-    });
-    picker.appendChild(label);
-  }
+  const closedWithDuration = tickets.filter((t) => t.status === 'closed' && t.createdAt && t.closedAt);
+  const avgResolutionMs = closedWithDuration.length
+    ? closedWithDuration.reduce((sum, t) => sum + (t.closedAt - t.createdAt), 0) / closedWithDuration.length
+    : null;
+
+  const claimedCount = tickets.filter((t) => t.claimedBy).length;
+  const unclaimedOpen = tickets.filter((t) => t.status === 'open' && !t.claimedBy).length;
+
+  const recent = [...tickets]
+    .sort((a, b) => (b.closedAt || b.createdAt || 0) - (a.closedAt || a.createdAt || 0))
+    .slice(0, 8)
+    .map((t) => ({
+      id: t.id,
+      userTag: t.userTag,
+      typeId: t.typeId,
+      status: t.status,
+      createdAt: t.createdAt,
+      closedAt: t.closedAt || null,
+      claimedByTag: t.claimedByTag || null,
+    }));
+
+  return { total, open, closed, byType, avgResolutionMs, claimedCount, unclaimedOpen, recent };
 }
 
-function openTypeModal(type = null) {
-  document.getElementById('type-modal-title').textContent = type ? 'Modifier le type de ticket' : 'Nouveau type de ticket';
-  document.getElementById('type-original-id').value = type ? type.id : '';
-  document.getElementById('type-emoji').value = type ? type.emoji : '';
-  document.getElementById('type-label').value = type ? type.label : '';
-  document.getElementById('type-id').value = type ? type.id : '';
-  document.getElementById('type-id').disabled = !!type;
-  document.getElementById('type-desc').value = type ? type.description : '';
-  document.getElementById('type-color').value = type ? type.color : '5865F2';
-  document.getElementById('type-delete-btn').style.display = type ? 'inline-flex' : 'none';
-
-  const categorySelect = document.getElementById('type-category');
-  if (categorySelect) {
-    categorySelect.innerHTML = '<option value="">Utiliser la catégorie par défaut (Globale)</option>';
-    
-    if (state.staffCategories && state.staffCategories.length > 0) {
-      state.staffCategories.forEach((cat) => {
-        const opt = document.createElement('option');
-        opt.value = cat.id;
-        opt.textContent = `📁 ${cat.name}`;
-        categorySelect.appendChild(opt);
-      });
-    }
-    categorySelect.value = type ? (type.categoryId || '') : '';
-  }
-
-  const welcomeInput = document.getElementById('type-welcome-msg');
-  if (welcomeInput) {
-    welcomeInput.value = type ? (type.welcomeMessage || '') : '';
-  }
-
-  selectedRoleIds = new Set(type ? type.allowedRoles || [] : []);
-  renderRolesPicker();
-
-  document.getElementById('type-modal-backdrop')?.classList.add('show');
+function toCsv(tickets) {
+  const headers = ['id', 'userTag', 'userId', 'typeId', 'status', 'claimedByTag', 'createdAt', 'closedAt', 'closedBy'];
+  const rows = tickets.map((t) =>
+    headers
+      .map((h) => {
+        const v = t[h] ?? '';
+        const s = String(v).replace(/"/g, '""');
+        return `"${s}"`;
+      })
+      .join(',')
+  );
+  return [headers.join(','), ...rows].join('\n');
 }
 
-function closeTypeModal() {
-  document.getElementById('type-modal-backdrop')?.classList.remove('show');
-}
+// Décode un message Discord du salon ticket pour l'afficher dans la console
+// live. Les messages du joueur (envoyés en MP au bot) arrivent ici sous
+// forme d'EMBED posté par le bot (relayUserToStaff), pas en texte brut —
+// sans ce décodage, ils apparaissaient comme "Bot" avec un texte vide et le
+// message réel du joueur n'était jamais visible côté dashboard.
+function mapTicketMessage(m) {
+  const time = m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-document.getElementById('add-type-btn')?.addEventListener('click', () => openTypeModal());
-document.getElementById('type-cancel-btn')?.addEventListener('click', closeTypeModal);
-
-document.getElementById('type-save-btn')?.addEventListener('click', async () => {
-  const originalId = document.getElementById('type-original-id').value;
-  const id = document.getElementById('type-id').value.trim().toLowerCase().replace(/\s+/g, '-');
-  const label = document.getElementById('type-label').value.trim();
-  const emoji = document.getElementById('type-emoji').value.trim();
-  const description = document.getElementById('type-desc').value.trim();
-  const color = document.getElementById('type-color').value.trim().replace('#', '') || '5865F2';
-  
-  const categoryId = document.getElementById('type-category')?.value || '';
-  const welcomeMessage = document.getElementById('type-welcome-msg')?.value.trim() || '';
-
-  if (!id || !label || !emoji) {
-    return toast('Emoji, nom et identifiant sont obligatoires.', true);
+  // Message tapé directement par un staff dans le salon Discord.
+  if (!m.author.bot) {
+    return { sender: m.author.username, text: m.content, time, from: 'staff' };
   }
 
-  const newType = { 
-    id, 
-    label, 
-    emoji, 
-    description, 
-    color, 
-    categoryId,
-    welcomeMessage,
-    allowedRoles: [...selectedRoleIds] 
-  };
-
-  let updated;
-  if (originalId) {
-    updated = state.ticketTypes.map((t) => (t.id === originalId ? newType : t));
-  } else {
-    if (state.ticketTypes.some((t) => t.id === id)) {
-      return toast('Cet identifiant est déjà utilisé.', true);
-    }
-    updated = [...state.ticketTypes, newType];
-  }
-
-  try {
-    const res = await api('POST', '/api/settings/ticket-types', { ticketTypes: updated });
-    state.ticketTypes = res.ticketTypes;
-    renderTicketTypes();
-    closeTypeModal();
-    toast('Type de ticket enregistré !');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-document.getElementById('type-delete-btn')?.addEventListener('click', async () => {
-  const originalId = document.getElementById('type-original-id').value;
-  if (!confirm('Supprimer ce type de ticket ? Les boutons du panel seront mis à jour.')) return;
-
-  const updated = state.ticketTypes.filter((t) => t.id !== originalId);
-  try {
-    const res = await api('POST', '/api/settings/ticket-types', { ticketTypes: updated });
-    state.ticketTypes = res.ticketTypes;
-    renderTicketTypes();
-    closeTypeModal();
-    toast('Type de ticket supprimé.');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-// ── Statistiques ───────────────────────────────────────────
-function typeLabel(typeId) {
-  const t = state.ticketTypes.find((t) => t.id === typeId);
-  return t ? `${t.emoji} ${t.label}` : typeId;
-}
-
-function formatDuration(ms) {
-  if (ms === null || ms === undefined) return '—';
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `${mins} min`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return `${hours} h ${remMins} min`;
-}
-
-function formatDate(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-}
-
-async function loadStats() {
-  let stats;
-  try {
-    stats = await api('GET', '/api/stats');
-  } catch (err) {
-    return toast(err.message, true);
-  }
-
-  const grid = document.getElementById('stat-grid');
-  if (grid) {
-    grid.innerHTML = `
-      <div class="stat-card">
-        <div class="stat-value">${stats.total}</div>
-        <div class="stat-label">Tickets créés</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color:var(--green)">${stats.open}</div>
-        <div class="stat-label">Actuellement ouverts</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${stats.closed}</div>
-        <div class="stat-label">Fermés</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color:${stats.unclaimedOpen > 0 ? 'var(--amber)' : 'var(--text)'}">${stats.unclaimedOpen}</div>
-        <div class="stat-label">Ouverts non pris en charge</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${formatDuration(stats.avgResolutionMs)}</div>
-        <div class="stat-label">Temps de résolution moyen</div>
-      </div>
-    `;
-  }
-
-  const byTypeEl = document.getElementById('stat-by-type');
-  if (byTypeEl) {
-    const entries = Object.entries(stats.byType).sort((a, b) => b[1] - a[1]);
-    if (entries.length === 0) {
-      byTypeEl.innerHTML = `<div class="empty-state"><div class="icon">📊</div>Aucun ticket pour l'instant.</div>`;
-    } else {
-      const max = Math.max(...entries.map(([, count]) => count));
-      byTypeEl.innerHTML = entries
-        .map(
-          ([typeId, count]) => `
-          <div class="bar-row">
-            <div class="bar-label">${escapeHtml(typeLabel(typeId))}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
-            <div class="bar-count">${count}</div>
-          </div>`
-        )
-        .join('');
-    }
-  }
-
-  const recentEl = document.getElementById('stat-recent');
-  if (recentEl) {
-    if (stats.recent.length === 0) {
-      recentEl.innerHTML = `<div class="empty-state"><div class="icon">🕓</div>Rien à afficher pour l'instant.</div>`;
-    } else {
-      recentEl.innerHTML = stats.recent
-        .map(
-          (t) => `
-          <div class="activity-row">
-            <span class="status-dot ${t.status === 'open' ? 'online' : 'offline'}"></span>
-            <div class="activity-body">
-              <div><strong>${escapeHtml(typeLabel(t.typeId))}</strong> — ${escapeHtml(t.userTag || 'inconnu')} <span class="stub-id mono">#${escapeHtml(t.id)}</span></div>
-              <div class="field-hint" style="margin-top:2px;">
-                ${t.status === 'open' ? `Ouvert le ${formatDate(t.createdAt)}` : `Fermé le ${formatDate(t.closedAt)}`}
-                ${t.claimedByTag ? ` · pris en charge par ${escapeHtml(t.claimedByTag)}` : ''}
-              </div>
-            </div>
-          </div>`
-        )
-        .join('');
-    }
-  }
-}
-
-document.getElementById('export-csv-btn')?.addEventListener('click', () => {
-  window.location.href = '/api/tickets/export.csv';
-});
-
-// ── Tickets ouverts ─────────────────────────────────────────
-function ticketStatusBadge(t) {
-  const base = 'display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;color:#fff;';
-  if (t.claimedByTag) {
-    return `<span style="${base}background:var(--green);">Pris en charge · ${escapeHtml(t.claimedByTag)}</span>`;
-  }
-  return `<span style="${base}background:var(--amber);">Ouvert · non pris en charge</span>`;
-}
-
-async function loadOpenTickets() {
-  const tbody = document.getElementById('open-tickets-list');
-  if (!tbody) return;
-
-  let tickets;
-  try {
-    tickets = await api('GET', '/api/tickets/open');
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#e04b4b;padding:20px;">Erreur de chargement : ${escapeHtml(err.message)}</td></tr>`;
-    return;
-  }
-
-  if (!tickets.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#888;padding:20px;">Aucun ticket ouvert pour l'instant.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = tickets
-    .map((t) => {
-      const discordLink =
-        t.guildId && t.channelId ? `https://discord.com/channels/${t.guildId}/${t.channelId}` : null;
-      return `
-        <tr>
-          <td class="mono">#${escapeHtml(t.id)}</td>
-          <td>${escapeHtml(t.userTag || 'inconnu')}</td>
-          <td>${escapeHtml(typeLabel(t.typeId))}</td>
-          <td>${ticketStatusBadge(t)}</td>
-          <td>${discordLink ? `<a class="btn-ghost" href="${discordLink}" target="_blank" rel="noopener">Ouvrir sur Discord</a>` : '—'}</td>
-        </tr>`;
-    })
-    .join('');
-}
-
-document.getElementById('refresh-open-tickets-btn')?.addEventListener('click', loadOpenTickets);
-
-// ── Accès admin ─────────────────────────────────────────────
-async function loadAdmins() {
-  let data;
-  try {
-    data = await api('GET', '/api/admins');
-  } catch (err) {
-    return toast(err.message, true);
-  }
-  state.admins = data.adminIds;
-
-  const list = document.getElementById('admins-list');
-  if (!list) return;
-
-  list.innerHTML = data.adminIds
-    .map((id) => {
-      const isSelf = id === data.selfId;
-      return `
-      <div class="admin-row">
-        <span class="mono">${escapeHtml(id)}</span>
-        ${isSelf ? '<span class="role-chip">Toi</span>' : ''}
-        <button class="btn-ghost admin-remove-btn" data-id="${escapeHtml(id)}" ${data.adminIds.length <= 1 ? 'disabled' : ''}>Retirer</button>
-      </div>`;
-    })
-    .join('');
-
-  list.querySelectorAll('.admin-remove-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm("Retirer l'accès de cet administrateur ?")) return;
-      try {
-        await api('DELETE', `/api/admins/${btn.dataset.id}`);
-        toast('Administrateur retiré.');
-        loadAdmins();
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
-  });
-}
-
-document.getElementById('add-admin-btn')?.addEventListener('click', async () => {
-  const input = document.getElementById('input-new-admin');
-  const id = input.value.trim();
-  if (!/^\d{15,25}$/.test(id)) return toast('ID Discord invalide.', true);
-  try {
-    await api('POST', '/api/admins', { discordId: id });
-    input.value = '';
-    toast('Administrateur ajouté.');
-    loadAdmins();
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-// ── LIVE CONSOLE & SUPPORT DIRECT ─────────────────────────
-window.activeTicketsData = {};
-
-async function loadTickets() {
-  const ticketSelect = document.getElementById('select-active-ticket');
-  if (!ticketSelect) return;
-
-  const previousValue = ticketSelect.value;
-
-  try {
-    const tickets = await api('GET', '/api/tickets/open');
-
-    ticketSelect.innerHTML = '<option value="">-- Sélectionner un ticket ouvert --</option>';
-    window.activeTicketsData = {};
-
-    tickets.forEach((ticket) => {
-      window.activeTicketsData[ticket.id] = ticket;
-      const option = document.createElement('option');
-      option.value = ticket.id;
-      option.textContent = `#${ticket.id} — ${ticket.userTag || 'inconnu'} (${typeLabel(ticket.typeId)})`;
-      ticketSelect.appendChild(option);
-    });
-
-    if ([...ticketSelect.options].some((o) => o.value === previousValue)) {
-      ticketSelect.value = previousValue;
-    }
-  } catch (err) {
-    console.error('Erreur de connexion au bot :', err);
-    toast(err.message, true);
-  }
-}
-
-async function renderMessages(ticketId) {
-  const chatMessages = document.getElementById('chat-messages-container');
-  if (!chatMessages) return;
-
-  if (!ticketId) {
-    chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Sélectionne un ticket pour voir le fil de discussion...</p>';
-    return;
-  }
-
-  chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Chargement…</p>';
-
-  let data;
-  try {
-    data = await api('GET', `/api/tickets/${encodeURIComponent(ticketId)}/messages`);
-  } catch (err) {
-    chatMessages.innerHTML = `<p style="color:#e04b4b; text-align:center; margin:auto;">${escapeHtml(err.message)}</p>`;
-    return;
-  }
-
-  chatMessages.innerHTML = '';
-
-  if (!data.messages.length) {
-    chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Aucun message pour l\'instant.</p>';
-    return;
-  }
-
-  data.messages.forEach((msg) => {
-    const msgDiv = document.createElement('div');
-    msgDiv.style.padding = '8px 12px';
-    msgDiv.style.borderRadius = '6px';
-    msgDiv.style.marginBottom = '6px';
-    msgDiv.style.maxWidth = '80%';
-    msgDiv.style.fontSize = '13px';
-
-    if (msg.sender.startsWith('Staff') || msg.sender === 'Bot') {
-      msgDiv.style.background = 'rgba(88, 101, 242, 0.2)';
-      msgDiv.style.borderLeft = '3px solid #5865f2';
-      msgDiv.style.alignSelf = 'flex-end';
-    } else {
-      msgDiv.style.background = 'rgba(255, 255, 255, 0.08)';
-      msgDiv.style.borderLeft = '3px solid #aaa';
-      msgDiv.style.alignSelf = 'flex-start';
-    }
-
-    msgDiv.innerHTML = `<strong>${escapeHtml(msg.sender)}</strong> <span style="font-size:10px; color:#aaa; margin-left:6px;">${escapeHtml(msg.time)}</span><br>${escapeHtml(msg.text)}`;
-    chatMessages.appendChild(msgDiv);
-  });
-
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-async function sendMessage() {
-  const ticketSelect = document.getElementById('select-active-ticket');
-  const chatInput = document.getElementById('live-chat-input');
-
-  const activeTicketId = ticketSelect?.value;
-  const text = chatInput?.value.trim();
-
-  if (!activeTicketId || !text) return;
-
-  try {
-    await api('POST', `/api/tickets/${encodeURIComponent(activeTicketId)}/reply`, { message: text });
-    chatInput.value = '';
-    await renderMessages(activeTicketId);
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
-
-// ── STUDIO, THÈMES & FOND D'ÉCRAN ─────────────────────────
-function applyThemeConfig(config) {
-  const previewBox = document.getElementById('wallpaper-preview');
-  const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
-  const blurRange = document.getElementById('range-blur');
-  const blurVal = document.getElementById('blur-val');
-  const opacityRange = document.getElementById('range-opacity');
-  const opacityVal = document.getElementById('opacity-val');
-
-  if (config.wallpaper) {
-    document.body.style.backgroundImage = `url('${config.wallpaper}')`;
-    document.body.style.backgroundSize = 'cover';
-    document.body.style.backgroundPosition = 'center';
-    document.body.style.backgroundAttachment = 'fixed';
-
-    if (previewBox) {
-      previewBox.style.backgroundImage = `url('${config.wallpaper}')`;
-      previewBox.textContent = '';
-    }
-    if (wallpaperUrlInput) wallpaperUrlInput.value = config.wallpaper;
-  }
-
-  if (config.blur !== undefined) {
-    if (blurRange) blurRange.value = config.blur;
-    if (blurVal) blurVal.textContent = config.blur;
-    document.querySelectorAll('.panel, .sidebar').forEach((el) => {
-      el.style.backdropFilter = `blur(${config.blur}px)`;
-    });
-  }
-
-  if (config.opacity !== undefined) {
-    if (opacityRange) opacityRange.value = config.opacity;
-    if (opacityVal) opacityVal.textContent = config.opacity;
-    const opacityHex = Math.round((config.opacity / 100) * 255).toString(16).padStart(2, '0');
-    document.querySelectorAll('.panel').forEach((el) => {
-      el.style.backgroundColor = `#18191c${opacityHex}`;
-    });
-  }
-}
-
-// ── INITIALISATION COMPLÈTE AU DOM ────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  initNavigation();
-
-  // Live Console Events
-  const ticketSelect = document.getElementById('select-active-ticket');
-  const chatInput = document.getElementById('live-chat-input');
-  const sendBtn = document.getElementById('send-chat-btn');
-  const refreshChatBtn = document.getElementById('refresh-chat-btn');
-
-  ticketSelect?.addEventListener('change', (e) => renderMessages(e.target.value));
-  sendBtn?.addEventListener('click', sendMessage);
-  chatInput?.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-  });
-  refreshChatBtn?.addEventListener('click', () => {
-    loadTickets();
-    if (ticketSelect?.value) renderMessages(ticketSelect.value);
-  });
-
-  // Theme Controls
-  const blurRange = document.getElementById('range-blur');
-  const opacityRange = document.getElementById('range-opacity');
-  const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
-  const wallpaperFileInput = document.getElementById('input-wallpaper-file');
-  const previewBox = document.getElementById('wallpaper-preview');
-
-  blurRange?.addEventListener('input', (e) => {
-    const val = e.target.value;
-    const blurVal = document.getElementById('blur-val');
-    if (blurVal) blurVal.textContent = val;
-    document.querySelectorAll('.panel, .sidebar').forEach((el) => {
-      el.style.backdropFilter = `blur(${val}px)`;
-    });
-  });
-
-  opacityRange?.addEventListener('input', (e) => {
-    const val = e.target.value;
-    const opacityVal = document.getElementById('opacity-val');
-    if (opacityVal) opacityVal.textContent = val;
-    const opacityHex = Math.round((val / 100) * 255).toString(16).padStart(2, '0');
-    document.querySelectorAll('.panel').forEach((el) => {
-      el.style.backgroundColor = `#18191c${opacityHex}`;
-    });
-  });
-
-  wallpaperUrlInput?.addEventListener('input', (e) => {
-    const url = e.target.value.trim();
-    if (url && previewBox) {
-      previewBox.style.backgroundImage = `url('${url}')`;
-      previewBox.textContent = '';
-    }
-  });
-
-  wallpaperFileInput?.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target.result;
-        if (previewBox) {
-          previewBox.style.backgroundImage = `url('${result}')`;
-          previewBox.textContent = '';
-        }
-        if (wallpaperUrlInput) wallpaperUrlInput.value = result;
-      };
-      reader.readAsDataURL(file);
-    }
-  });
-
-  document.getElementById('save-theme-btn')?.addEventListener('click', () => {
-    const config = {
-      blur: blurRange?.value || 10,
-      opacity: opacityRange?.value || 80,
-      wallpaper: wallpaperUrlInput?.value || '',
+  // Message envoyé depuis la console live du dashboard (texte brut préfixé).
+  if (m.content.startsWith('**[Dashboard]')) {
+    const match = m.content.match(/^\*\*\[Dashboard\]\s*(.+?)\s*:\*\*\s*([\s\S]*)$/);
+    return {
+      sender: match ? `Staff (Dashboard) · ${match[1]}` : 'Staff (Dashboard)',
+      text: match ? match[2] : m.content,
+      time,
+      from: 'staff',
     };
-    localStorage.setItem('dashboard_theme_config', JSON.stringify(config));
-    applyThemeConfig(config);
-    toast('Thème enregistré avec succès !');
-  });
-
-  document.getElementById('reset-theme-btn')?.addEventListener('click', () => {
-    localStorage.removeItem('dashboard_theme_config');
-    location.reload();
-  });
-
-  // Restauration du thème sauvegardé
-  const savedTheme = localStorage.getItem('dashboard_theme_config');
-  if (savedTheme) {
-    try {
-      applyThemeConfig(JSON.parse(savedTheme));
-    } catch {}
   }
-});
 
-// ── Démarrage Système ──────────────────────────────────────
-(async function init() {
-  await loadMe();
-  await refreshStatus();
-  await loadSettings();
-  await loadGuilds();
-  setInterval(refreshStatus, 5000);
-})();
+  // Message relayé automatiquement par le bot. Dans le salon staff, c'est
+  // toujours le message d'un joueur (relayUserToStaff) : son tag est dans
+  // embed.author.name, son texte dans embed.description.
+  const embed = m.embeds?.[0];
+  if (embed?.author?.name) {
+    const isStaffRelay = embed.author.name.startsWith('Staff · ');
+    return {
+      sender: isStaffRelay ? embed.author.name : `${embed.author.name} (joueur)`,
+      text: embed.description || '*[pièce jointe uniquement]*',
+      time,
+      from: isStaffRelay ? 'staff' : 'user',
+    };
+  }
+
+  // Embed de notification système (ouverture/claim/fermeture du ticket).
+  if (embed) {
+    return { sender: 'Système', text: embed.title || embed.description || '[notification]', time, from: 'system' };
+  }
+
+  return { sender: 'Bot', text: m.content || '[message vide]', time, from: 'system' };
+}
+
+function createDashboardServer() {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(express.json());
+  app.use(
+    session({
+      store: sessionStore,
+      secret: store.getSessionSecret(),
+      resave: false,
+      saveUninitialized: false,
+      rolling: true,
+      cookie: {
+        maxAge: 1000 * 60 * 60 * 24 * 30,
+        httpOnly: true,
+        sameSite: 'lax',
+      },
+    })
+  );
+
+  app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
+
+  // ── Healthcheck ──────────────────────────────────────────
+  // À pinger toutes les 5-10 min par un service externe gratuit (UptimeRobot,
+  // cron-job.org...) pour empêcher Render de mettre le service en veille sur
+  // le plan gratuit. Sans requête HTTP entrante, Render endort le process
+  // après ~15 min d'inactivité, ce qui coupe le bot avec.
+  app.get('/healthz', (req, res) => {
+    res.json({ ok: true, bot: bot.getStatus().status, uptime: process.uptime() });
+  });
+
+  // ── Routing racine ─────────────────────────────────────
+  app.get('/', (req, res) => {
+    if (!store.hasAuthApp()) return res.redirect('/setup');
+    if (!req.session.discordUser || !store.isAdmin(req.session.discordUser.id)) return res.redirect('/login');
+    return res.redirect('/dashboard');
+  });
+
+  // ── Setup ──────────────────────────────────────────────
+  app.get('/setup', requireNoAuthAppYet, (req, res) => {
+    res.type('html').send(readView('setup.html'));
+  });
+
+  app.get('/api/setup/default-redirect', requireNoAuthAppYet, (req, res) => {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    res.json({ redirectUri: `${proto}://${req.get('host')}/api/auth/discord/callback` });
+  });
+
+  app.post('/api/setup', requireNoAuthAppYet, (req, res) => {
+    const { clientId, clientSecret, redirectUri } = req.body || {};
+    if (!clientId || !clientSecret || !redirectUri) {
+      return res.status(400).json({ error: "Client ID, Client Secret et Redirect URI sont obligatoires." });
+    }
+    store.setAuthConfig({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), redirectUri: redirectUri.trim() });
+    res.json({ ok: true });
+  });
+
+  // ── Login via Discord OAuth2 ────────────────────────────
+  app.get('/login', requireAuthAppSet, (req, res) => {
+    if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
+    res.type('html').send(readView('login.html'));
+  });
+
+  app.get('/api/auth/discord', requireAuthAppSet, (req, res) => {
+    const { clientId, redirectUri } = store.getAuthConfig();
+    const state = crypto.randomBytes(16).toString('hex');
+    req.session.oauthState = state;
+    const url = new URL('https://discord.com/oauth2/authorize');
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'identify');
+    url.searchParams.set('state', state);
+    url.searchParams.set('prompt', 'consent');
+    res.redirect(url.toString());
+  });
+
+  app.get('/api/auth/discord/callback', requireAuthAppSet, async (req, res) => {
+    const { code, state } = req.query;
+    if (!code || !state || state !== req.session.oauthState) {
+      return res.type('html').send(authErrorPage('Requête invalide ou expirée. Réessaie de te connecter.'));
+    }
+    delete req.session.oauthState;
+
+    const { clientId, clientSecret, redirectUri } = store.getAuthConfig();
+
+    try {
+      const tokenRes = await fetch(`${DISCORD_API}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+      if (!tokenRes.ok) throw new Error(`Échange du code refusé par Discord (${tokenRes.status})`);
+      const tokenData = await tokenRes.json();
+
+      const userRes = await fetch(`${DISCORD_API}/users/@me`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      if (!userRes.ok) throw new Error("Impossible de récupérer ton profil Discord.");
+      const user = await userRes.json();
+
+      const isFirstEver = !store.hasAnyAdmin();
+      if (isFirstEver) {
+        store.addAdmin(user.id);
+      }
+
+      if (!store.isAdmin(user.id)) {
+        return res.type('html').send(authErrorPage("Ton compte Discord n'a pas accès à ce dashboard. Demande à un administrateur existant de t'ajouter."));
+      }
+
+      req.session.discordUser = {
+        id: user.id,
+        username: user.global_name || user.username,
+        handle: user.discriminator && user.discriminator !== '0' ? `${user.username}#${user.discriminator}` : user.username,
+        avatar: user.avatar
+          ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`
+          : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
+      };
+
+      // ── SAUVEGARDE EN BASE DE DONNÉES (SQL) ────────────────
+      try {
+        // 1. Ajouter ou Mettre à jour l'utilisateur
+        await db.query(
+          `INSERT INTO users (discord_id, username) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE username = VALUES(username)`,
+          [user.id, user.global_name || user.username]
+        );
+
+        // Récupérer l'ID de l'utilisateur en BDD
+        const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [user.id]);
+        const dbUserId = userRows[0].id;
+        req.session.discordUser.dbId = dbUserId;
+
+        // 2. Enregistrer le log de connexion
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
+          [dbUserId, ip, req.headers['user-agent'] || '']
+        );
+      } catch (sqlErr) {
+        console.error('Erreur SQL lors de la connexion :', sqlErr.message);
+      }
+
+      res.redirect('/dashboard');
+    } catch (err) {
+      console.error('Erreur OAuth Discord:', err.message);
+      res.type('html').send(authErrorPage(`Connexion Discord échouée : ${err.message}`));
+    }
+  });
+
+  app.post('/api/logout', async (req, res) => {
+    if (req.session.discordUser && req.session.discordUser.dbId) {
+      try {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGOUT', ?, ?)`,
+          [req.session.discordUser.dbId, ip, req.headers['user-agent'] || '']
+        );
+      } catch (sqlErr) {
+        console.error('Erreur SQL Déconnexion :', sqlErr.message);
+      }
+    }
+    req.session.destroy(() => res.json({ ok: true }));
+  });
+
+  // ── Dashboard (protégé) ────────────────────────────────
+  app.get('/dashboard', requireAuthAppSet, requireAuth, (req, res) => {
+    res.type('html').send(readView('dashboard.html'));
+  });
+
+  // ── API protégée ────────────────────────────────────────
+  const api = express.Router();
+  api.use(requireAuth);
+
+  api.get('/me', (req, res) => {
+    res.json({ user: req.session.discordUser, admins: store.getAuthConfig().adminIds });
+  });
+
+  // ── 🔧 ROUTES API FIVEM & CONFIGURATION SQL ─────────────
+
+  // Obtenir la configuration utilisateur depuis SQL
+  api.get('/fivem/config', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const [rows] = await db.query('SELECT fivem_enabled, fivem_url, blur_val FROM user_configs WHERE user_id = ?', [dbUserId]);
+      if (rows.length > 0) {
+        return res.json({
+          enabled: Boolean(rows[0].fivem_enabled),
+          url: rows[0].fivem_url,
+          blurVal: rows[0].blur_val
+        });
+      }
+      res.json({ enabled: false, url: '', blurVal: 5 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Erreur serveur lors de la récupération SQL." });
+    }
+  });
+
+  // Sauvegarder la configuration FiveM dans SQL
+  api.post('/fivem/config', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const { enabled, url } = req.body;
+
+      await db.query(`
+        INSERT INTO user_configs (user_id, fivem_enabled, fivem_url)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE fivem_enabled = VALUES(fivem_enabled), fivem_url = VALUES(fivem_url)
+      `, [dbUserId, enabled ? 1 : 0, url || '']);
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Impossible d'enregistrer la configuration dans MySQL." });
+    }
+  });
+
+  // Liste des bannis FiveM (depuis le serveur FiveM ou données par défaut)
+  api.get('/fivem/bans', async (req, res) => {
+    try {
+      const dbUserId = req.session.discordUser.dbId;
+      const [rows] = await db.query('SELECT fivem_url FROM user_configs WHERE user_id = ?', [dbUserId]);
+
+      if (!rows.length || !rows[0].fivem_url) {
+        return res.json([]);
+      }
+
+      // Exemple : Si vous avez un endpoint d'API externe sur votre serveur FiveM pour récupérer les bans :
+      /*
+      const fetch = require('node-fetch');
+      const response = await fetch(`${rows[0].fivem_url}/bans.json`);
+      const bans = await response.json();
+      return res.json(bans);
+      */
+
+      // Envoi de données si tout est configuré correctement
+      res.json([]);
+    } catch (err) {
+      res.status(500).json({ error: "Erreur lors de la récupération des bannis." });
+    }
+  });
+
+  // ── Routes d'origine de l'application ─────────────────
+  api.get('/status', (req, res) => {
+    res.json(bot.getStatus());
+  });
+
+  api.get('/settings', (req, res) => {
+    const b = store.getBot();
+    res.json({
+      bot: { ...b, token: b.token ? maskToken(b.token) : '' },
+      hasToken: !!b.token,
+      ticketTypes: store.getTicketTypes(),
+    });
+  });
+
+  api.post('/settings/bot', async (req, res) => {
+    const patch = { ...req.body };
+    if (patch.token && patch.token.includes('•')) delete patch.token;
+    const updated = store.setBot(patch);
+    res.json({ ok: true, bot: { ...updated, token: updated.token ? maskToken(updated.token) : '' } });
+  });
+
+  api.post('/settings/ticket-types', (req, res) => {
+    const types = req.body?.ticketTypes;
+    if (!Array.isArray(types)) return res.status(400).json({ error: 'Format invalide.' });
+
+    for (const t of types) {
+      if (!t.id || !t.label || !t.emoji) {
+        return res.status(400).json({ error: 'Chaque type de ticket doit avoir un id, un label et un emoji.' });
+      }
+    }
+    const ids = types.map((t) => t.id);
+    if (new Set(ids).size !== ids.length) {
+      return res.status(400).json({ error: 'Les identifiants de types de tickets doivent être uniques.' });
+    }
+
+    const saved = store.setTicketTypes(types);
+    res.json({ ok: true, ticketTypes: saved });
+  });
+
+  api.post('/bot/restart', async (req, res) => {
+    await bot.restart();
+    res.json({ ok: true, status: bot.getStatus() });
+  });
+
+  api.post('/bot/refresh-panel', async (req, res) => {
+    await bot.refreshPanel();
+    res.json({ ok: true });
+  });
+
+  api.get('/discord/guilds', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') return res.json([]);
+    const guilds = [...bot.client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name }));
+    res.json(guilds);
+  });
+
+  api.get('/discord/guilds/:guildId/channels', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') return res.json([]);
+    try {
+      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const channels = await guild.channels.fetch();
+      const textChannels = [...channels.values()]
+        .filter((c) => c && c.type === 0)
+        .map((c) => ({ id: c.id, name: c.name }));
+      res.json(textChannels);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.get('/discord/guilds/:guildId/categories', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') return res.json([]);
+    try {
+      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const channels = await guild.channels.fetch();
+      const categories = [...channels.values()]
+        .filter((c) => c && c.type === 4)
+        .map((c) => ({ id: c.id, name: c.name }));
+      res.json(categories);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.get('/discord/guilds/:guildId/roles', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') return res.json([]);
+    try {
+      const guild = await bot.client.guilds.fetch(req.params.guildId);
+      const roles = await guild.roles.fetch();
+      const list = [...roles.values()]
+        .filter((r) => r.id !== guild.id)
+        .sort((a, b) => b.position - a.position)
+        .map((r) => ({ id: r.id, name: r.name, color: r.hexColor }));
+      res.json(list);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.get('/stats', async (req, res) => {
+    res.json(await computeStats());
+  });
+
+  // Alimente l'onglet "Tickets Ouverts" du dashboard (jusqu'ici jamais
+  // appelé côté front, donc la liste restait vide en permanence).
+  api.get('/tickets/open', async (req, res) => {
+    const tickets = await readTickets();
+    const open = tickets
+      .filter((t) => t.status === 'open')
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .map((t) => ({
+        id: t.id,
+        channelId: t.channelId,
+        guildId: t.guildId,
+        userTag: t.userTag,
+        userId: t.userId,
+        typeId: t.typeId,
+        status: t.status,
+        claimedByTag: t.claimedByTag || null,
+        createdAt: t.createdAt,
+      }));
+    res.json(open);
+  });
+
+  // ── Console live (répondre aux tickets sans quitter le dashboard) ──
+  api.get('/tickets/:id/messages', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') {
+      return res.status(503).json({ error: 'Le bot est hors ligne, impossible de lire les messages.' });
+    }
+    try {
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
+      const ticket = JSON.parse(rows[0].data);
+
+      const channel = await bot.client.channels.fetch(ticket.channelId);
+      const messages = await channel.messages.fetch({ limit: 30 });
+      const list = [...messages.values()].reverse().map((m) => mapTicketMessage(m));
+
+      res.json({
+        ticket: { id: ticket.id, userTag: ticket.userTag, typeId: ticket.typeId, status: ticket.status },
+        messages: list,
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.post('/tickets/:id/reply', async (req, res) => {
+    if (!bot.client || bot.status !== 'online' || !bot.ticketManager) {
+      return res.status(503).json({ error: 'Le bot est hors ligne, impossible d\'envoyer un message.' });
+    }
+    const message = String(req.body?.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'Message vide.' });
+
+    try {
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
+      const ticket = JSON.parse(rows[0].data);
+
+      const staffLabel = req.session.discordUser?.username || 'Staff';
+      await bot.ticketManager.sendDashboardReply(ticket, staffLabel, message);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.get('/tickets/export.csv', async (req, res) => {
+    const tickets = await readTickets();
+    const csv = toCsv(tickets);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="tickets-${Date.now()}.csv"`);
+    res.send(csv);
+  });
+
+  api.get('/admins', (req, res) => {
+    res.json({ adminIds: store.getAuthConfig().adminIds, selfId: req.session.discordUser.id });
+  });
+
+  api.post('/admins', (req, res) => {
+    const id = String(req.body?.discordId || '').trim();
+    if (!/^\d{15,25}$/.test(id)) return res.status(400).json({ error: "ID Discord invalide (identifiant numérique attendu)." });
+    store.addAdmin(id);
+    res.json({ ok: true, adminIds: store.getAuthConfig().adminIds });
+  });
+
+  api.delete('/admins/:id', (req, res) => {
+    const { adminIds } = store.getAuthConfig();
+    if (adminIds.length <= 1) return res.status(400).json({ error: 'Impossible de retirer le dernier administrateur.' });
+    store.removeAdmin(req.params.id);
+    res.json({ ok: true, adminIds: store.getAuthConfig().adminIds });
+  });
+
+  app.use('/api', api);
+
+  return app;
+}
+
+function maskToken(token) {
+  if (token.length <= 8) return '••••••••';
+  return `${token.slice(0, 6)}${'•'.repeat(18)}${token.slice(-4)}`;
+}
+
+function authErrorPage(message) {
+  return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><title>Connexion refusée</title>
+<link rel="stylesheet" href="/assets/css/style.css"></head>
+<body><div class="auth-page"><div class="auth-card">
+<div class="auth-logo">🎫</div>
+<h1>Connexion refusée</h1>
+<div class="auth-error show">${message.replace(/</g, '&lt;')}</div>
+<a class="btn-primary" style="display:block;text-align:center;text-decoration:none;" href="/login">Retour à la connexion</a>
+</div></div></body></html>`;
+}
+
+module.exports = createDashboardServer;
