@@ -447,6 +447,14 @@ document.getElementById('type-save-btn')?.addEventListener('click', async () => 
   if (!id || !label || !emoji) {
     return toast('Emoji, nom et identifiant sont obligatoires.', true);
   }
+  // Miroir de lib/config.js#isValidEmoji côté serveur : évite un aller-retour
+  // API inutile pour une erreur qu'on peut détecter tout de suite. La
+  // validation serveur reste la source de vérité (voir /api/settings/ticket-types).
+  const CUSTOM_EMOJI_RE = /^<a?:\w{2,32}:\d{17,20}>$/;
+  const UNICODE_EMOJI_RE = /^(\p{Extended_Pictographic}\uFE0F?)(\u200d\p{Extended_Pictographic}\uFE0F?)*$/u;
+  if (!CUSTOM_EMOJI_RE.test(emoji) && !UNICODE_EMOJI_RE.test(emoji)) {
+    return toast(`Emoji invalide : "${emoji}". Utilise un emoji Unicode (ex: 🎫) ou un emoji du serveur (ex: <:nom:1234567890>).`, true);
+  }
 
   const newType = { 
     id, 
