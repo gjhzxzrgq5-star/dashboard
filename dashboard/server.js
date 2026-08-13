@@ -12,7 +12,7 @@ const { pool: db } = require('../lib/db');
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
 
-// ── Sessions stockées en MySQL ───────────────────────────────
+// ── Sessions stockées dans Aiven MySQL ───────────────────────
 const sessionStore = new MySQLStore({}, db);
 
 function readView(name) {
