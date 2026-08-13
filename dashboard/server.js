@@ -12,7 +12,11 @@ const { pool: db } = require('../lib/db');
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
 
-// ── Sessions stockées dans Aiven MySQL ───────────────────────
+// ── Sessions stockées en MySQL ───────────────────────────────
+// Avant : session-file-store écrivait sur le disque local du conteneur,
+// qui est réinitialisé à chaque redeploy/redémarrage Render → tout le monde
+// était déconnecté et devait tout reconfigurer. Maintenant les sessions
+// (donc les connexions Discord des admins) survivent aux redeploys.
 const sessionStore = new MySQLStore({}, db);
 
 function readView(name) {
@@ -35,6 +39,8 @@ function requireAuthAppSet(req, res, next) {
   return res.redirect('/setup');
 }
 
+// Les tickets vivent désormais en MySQL (table `tickets`, gérée par
+// lib/ticketManager.js) plutôt que dans data/tickets.json.
 async function readTickets() {
   try {
     const [rows] = await db.query('SELECT data FROM tickets ORDER BY created_at DESC');
@@ -94,13 +100,20 @@ function toCsv(tickets) {
   return [headers.join(','), ...rows].join('\n');
 }
 
+// Décode un message Discord du salon ticket pour l'afficher dans la console
+// live. Les messages du joueur (envoyés en MP au bot) arrivent ici sous
+// forme d'EMBED posté par le bot (relayUserToStaff), pas en texte brut —
+// sans ce décodage, ils apparaissaient comme "Bot" avec un texte vide et le
+// message réel du joueur n'était jamais visible côté dashboard.
 function mapTicketMessage(m) {
   const time = m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
+  // Message tapé directement par un staff dans le salon Discord.
   if (!m.author.bot) {
     return { sender: m.author.username, text: m.content, time, from: 'staff' };
   }
 
+  // Message envoyé depuis la console live du dashboard (texte brut préfixé).
   if (m.content.startsWith('**[Dashboard]')) {
     const match = m.content.match(/^\*\*\[Dashboard\]\s*(.+?)\s*:\*\*\s*([\s\S]*)$/);
     return {
@@ -111,6 +124,9 @@ function mapTicketMessage(m) {
     };
   }
 
+  // Message relayé automatiquement par le bot. Dans le salon staff, c'est
+  // toujours le message d'un joueur (relayUserToStaff) : son tag est dans
+  // embed.author.name, son texte dans embed.description.
   const embed = m.embeds?.[0];
   if (embed?.author?.name) {
     const isStaffRelay = embed.author.name.startsWith('Staff · ');
@@ -122,6 +138,7 @@ function mapTicketMessage(m) {
     };
   }
 
+  // Embed de notification système (ouverture/claim/fermeture du ticket).
   if (embed) {
     return { sender: 'Système', text: embed.title || embed.description || '[notification]', time, from: 'system' };
   }
@@ -150,16 +167,23 @@ function createDashboardServer() {
 
   app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
 
+  // ── Healthcheck ──────────────────────────────────────────
+  // À pinger toutes les 5-10 min par un service externe gratuit (UptimeRobot,
+  // cron-job.org...) pour empêcher Render de mettre le service en veille sur
+  // le plan gratuit. Sans requête HTTP entrante, Render endort le process
+  // après ~15 min d'inactivité, ce qui coupe le bot avec.
   app.get('/healthz', (req, res) => {
     res.json({ ok: true, bot: bot.getStatus().status, uptime: process.uptime() });
   });
 
+  // ── Routing racine ─────────────────────────────────────
   app.get('/', (req, res) => {
     if (!store.hasAuthApp()) return res.redirect('/setup');
     if (!req.session.discordUser || !store.isAdmin(req.session.discordUser.id)) return res.redirect('/login');
     return res.redirect('/dashboard');
   });
 
+  // ── Setup ──────────────────────────────────────────────
   app.get('/setup', requireNoAuthAppYet, (req, res) => {
     res.type('html').send(readView('setup.html'));
   });
@@ -178,6 +202,7 @@ function createDashboardServer() {
     res.json({ ok: true });
   });
 
+  // ── Login via Discord OAuth2 ────────────────────────────
   app.get('/login', requireAuthAppSet, (req, res) => {
     if (req.session.discordUser && store.isAdmin(req.session.discordUser.id)) return res.redirect('/dashboard');
     res.type('html').send(readView('login.html'));
@@ -245,17 +270,21 @@ function createDashboardServer() {
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
 
+      // ── SAUVEGARDE EN BASE DE DONNÉES (SQL) ────────────────
       try {
+        // 1. Ajouter ou Mettre à jour l'utilisateur
         await db.query(
           `INSERT INTO users (discord_id, username) VALUES (?, ?)
            ON DUPLICATE KEY UPDATE username = VALUES(username)`,
           [user.id, user.global_name || user.username]
         );
 
+        // Récupérer l'ID de l'utilisateur en BDD
         const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [user.id]);
         const dbUserId = userRows[0].id;
         req.session.discordUser.dbId = dbUserId;
 
+        // 2. Enregistrer le log de connexion
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         await db.query(
           `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
@@ -287,6 +316,7 @@ function createDashboardServer() {
     req.session.destroy(() => res.json({ ok: true }));
   });
 
+  // ── Dashboard (protégé) ────────────────────────────────
   app.get('/dashboard', requireAuthAppSet, requireAuth, (req, res) => {
     res.type('html').send(readView('dashboard.html'));
   });
@@ -299,73 +329,9 @@ function createDashboardServer() {
     res.json({ user: req.session.discordUser, admins: store.getAuthConfig().adminIds });
   });
 
-  // ── 💳 GESTION DE L'ABONNEMENT ET DE L'ACHETEUR ─────────────
-  api.get('/subscription', async (req, res) => {
-    try {
-      const dbUserId = req.session.discordUser.dbId;
-      const [rows] = await db.query('SELECT customer_id, plan_type, is_active, auto_renew, opt_fivem, opt_priority, opt_backups FROM subscriptions WHERE user_id = ?', [dbUserId]);
+  // ── 🔧 ROUTES API FIVEM & CONFIGURATION SQL ─────────────
 
-      if (rows.length > 0) {
-        const sub = rows[0];
-        return res.json({
-          customerId: sub.customer_id || '',
-          planType: sub.plan_type || 'free',
-          isActive: Boolean(sub.is_active),
-          autoRenew: Boolean(sub.auto_renew),
-          options: {
-            fivem: Boolean(sub.opt_fivem),
-            priority: Boolean(sub.opt_priority),
-            backups: Boolean(sub.opt_backups)
-          }
-        });
-      }
-
-      res.json({
-        customerId: '',
-        planType: 'free',
-        isActive: false,
-        autoRenew: false,
-        options: { fivem: false, priority: false, backups: false }
-      });
-    } catch (err) {
-      console.error('Erreur récupération abonnement:', err);
-      res.status(500).json({ error: "Erreur serveur lors de la récupération de l'abonnement." });
-    }
-  });
-
-  api.post('/subscription', async (req, res) => {
-    try {
-      const dbUserId = req.session.discordUser.dbId;
-      const { customerId, planType, autoRenew, options } = req.body;
-
-      await db.query(`
-        INSERT INTO subscriptions (user_id, customer_id, plan_type, auto_renew, opt_fivem, opt_priority, opt_backups)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE 
-          customer_id = VALUES(customer_id),
-          plan_type = VALUES(plan_type),
-          auto_renew = VALUES(auto_renew),
-          opt_fivem = VALUES(opt_fivem),
-          opt_priority = VALUES(opt_priority),
-          opt_backups = VALUES(opt_backups)
-      `, [
-        dbUserId,
-        customerId || '',
-        planType || 'free',
-        autoRenew ? 1 : 0,
-        options?.fivem ? 1 : 0,
-        options?.priority ? 1 : 0,
-        options?.backups ? 1 : 0
-      ]);
-
-      res.json({ ok: true });
-    } catch (err) {
-      console.error('Erreur sauvegarde abonnement:', err);
-      res.status(500).json({ error: "Impossible de sauvegarder l'abonnement." });
-    }
-  });
-
-  // ── Routes FiveM & Configuration SQL ───────────────────
+  // Obtenir la configuration utilisateur depuis SQL
   api.get('/fivem/config', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -384,6 +350,7 @@ function createDashboardServer() {
     }
   });
 
+  // Sauvegarder la configuration FiveM dans SQL
   api.post('/fivem/config', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -402,6 +369,7 @@ function createDashboardServer() {
     }
   });
 
+  // Liste des bannis FiveM (depuis le serveur FiveM ou données par défaut)
   api.get('/fivem/bans', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -410,6 +378,16 @@ function createDashboardServer() {
       if (!rows.length || !rows[0].fivem_url) {
         return res.json([]);
       }
+
+      // Exemple : Si vous avez un endpoint d'API externe sur votre serveur FiveM pour récupérer les bans :
+      /*
+      const fetch = require('node-fetch');
+      const response = await fetch(`${rows[0].fivem_url}/bans.json`);
+      const bans = await response.json();
+      return res.json(bans);
+      */
+
+      // Envoi de données si tout est configuré correctement
       res.json([]);
     } catch (err) {
       res.status(500).json({ error: "Erreur lors de la récupération des bannis." });
@@ -518,6 +496,8 @@ function createDashboardServer() {
     res.json(await computeStats());
   });
 
+  // Alimente l'onglet "Tickets Ouverts" du dashboard (jusqu'ici jamais
+  // appelé côté front, donc la liste restait vide en permanence).
   api.get('/tickets/open', async (req, res) => {
     const tickets = await readTickets();
     const open = tickets
@@ -537,6 +517,7 @@ function createDashboardServer() {
     res.json(open);
   });
 
+  // ── Console live (répondre aux tickets sans quitter le dashboard) ──
   api.get('/tickets/:id/messages', async (req, res) => {
     if (!bot.client || bot.status !== 'online') {
       return res.status(503).json({ error: 'Le bot est hors ligne, impossible de lire les messages.' });
