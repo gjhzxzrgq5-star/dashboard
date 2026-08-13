@@ -450,6 +450,27 @@ function createDashboardServer() {
     res.json(await computeStats());
   });
 
+  // Alimente l'onglet "Tickets Ouverts" du dashboard (jusqu'ici jamais
+  // appelé côté front, donc la liste restait vide en permanence).
+  api.get('/tickets/open', async (req, res) => {
+    const tickets = await readTickets();
+    const open = tickets
+      .filter((t) => t.status === 'open')
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .map((t) => ({
+        id: t.id,
+        channelId: t.channelId,
+        guildId: t.guildId,
+        userTag: t.userTag,
+        userId: t.userId,
+        typeId: t.typeId,
+        status: t.status,
+        claimedByTag: t.claimedByTag || null,
+        createdAt: t.createdAt,
+      }));
+    res.json(open);
+  });
+
   api.get('/tickets/export.csv', async (req, res) => {
     const tickets = await readTickets();
     const csv = toCsv(tickets);
