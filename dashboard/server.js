@@ -100,6 +100,52 @@ function toCsv(tickets) {
   return [headers.join(','), ...rows].join('\n');
 }
 
+// Décode un message Discord du salon ticket pour l'afficher dans la console
+// live. Les messages du joueur (envoyés en MP au bot) arrivent ici sous
+// forme d'EMBED posté par le bot (relayUserToStaff), pas en texte brut —
+// sans ce décodage, ils apparaissaient comme "Bot" avec un texte vide et le
+// message réel du joueur n'était jamais visible côté dashboard.
+function mapTicketMessage(m) {
+  const time = m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  // Message tapé directement par un staff dans le salon Discord.
+  if (!m.author.bot) {
+    return { sender: m.author.username, text: m.content, time, from: 'staff' };
+  }
+
+  // Message envoyé depuis la console live du dashboard (texte brut préfixé).
+  if (m.content.startsWith('**[Dashboard]')) {
+    const match = m.content.match(/^\*\*\[Dashboard\]\s*(.+?)\s*:\*\*\s*([\s\S]*)$/);
+    return {
+      sender: match ? `Staff (Dashboard) · ${match[1]}` : 'Staff (Dashboard)',
+      text: match ? match[2] : m.content,
+      time,
+      from: 'staff',
+    };
+  }
+
+  // Message relayé automatiquement par le bot. Dans le salon staff, c'est
+  // toujours le message d'un joueur (relayUserToStaff) : son tag est dans
+  // embed.author.name, son texte dans embed.description.
+  const embed = m.embeds?.[0];
+  if (embed?.author?.name) {
+    const isStaffRelay = embed.author.name.startsWith('Staff · ');
+    return {
+      sender: isStaffRelay ? embed.author.name : `${embed.author.name} (joueur)`,
+      text: embed.description || '*[pièce jointe uniquement]*',
+      time,
+      from: isStaffRelay ? 'staff' : 'user',
+    };
+  }
+
+  // Embed de notification système (ouverture/claim/fermeture du ticket).
+  if (embed) {
+    return { sender: 'Système', text: embed.title || embed.description || '[notification]', time, from: 'system' };
+  }
+
+  return { sender: 'Bot', text: m.content || '[message vide]', time, from: 'system' };
+}
+
 function createDashboardServer() {
   const app = express();
   app.set('trust proxy', 1);
@@ -483,11 +529,7 @@ function createDashboardServer() {
 
       const channel = await bot.client.channels.fetch(ticket.channelId);
       const messages = await channel.messages.fetch({ limit: 30 });
-      const list = [...messages.values()].reverse().map((m) => ({
-        sender: m.author.bot ? (m.content.startsWith('**[Dashboard]') ? 'Staff (Dashboard)' : 'Bot') : m.author.username,
-        text: m.content,
-        time: m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      }));
+      const list = [...messages.values()].reverse().map((m) => mapTicketMessage(m));
 
       res.json({
         ticket: { id: ticket.id, userTag: ticket.userTag, typeId: ticket.typeId, status: ticket.status },
