@@ -69,6 +69,7 @@ const LAZY_LOADERS = {
   access: loadAdmins,
   livechat: loadTickets,
   'open-tickets': loadOpenTickets,
+  fivembans: loadFivemBans,
 };
 const loadedViews = new Set(['overview']);
 
@@ -159,6 +160,69 @@ async function loadSettings() {
 
   renderTicketTypes();
 }
+
+async function loadFivemConfig() {
+  try {
+    const data = await api('GET', '/api/fivem/config');
+    const toggle = document.getElementById('toggle-fivem');
+    const urlInput = document.getElementById('input-fivem-url');
+    if (toggle) toggle.checked = Boolean(data.enabled);
+    if (urlInput) urlInput.value = data.url || '';
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+document.getElementById('save-fivem-btn')?.addEventListener('click', async () => {
+  const enabled = document.getElementById('toggle-fivem')?.checked || false;
+  const url = document.getElementById('input-fivem-url')?.value.trim() || '';
+  try {
+    await api('POST', '/api/fivem/config', { enabled, url });
+    toast('Configuration FiveM enregistrée.');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+async function loadFivemBans() {
+  const list = document.getElementById('fivembans-list');
+  const info = document.getElementById('fivembans-server-info');
+  if (!list) return;
+
+  list.innerHTML = `<p style="color:#888;padding:10px 0;">Chargement…</p>`;
+
+  let bans;
+  try {
+    bans = await api('GET', '/api/fivem/bans');
+  } catch (err) {
+    list.innerHTML = `<p style="color:#e04b4b;padding:10px 0;">Erreur : ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  if (info) {
+    info.textContent = bans.length
+      ? `${bans.length} joueur(s) banni(s).`
+      : "Aucun bannissement, ou serveur FiveM non configuré.";
+  }
+
+  if (!bans.length) {
+    list.innerHTML = `<p style="color:#888;padding:10px 0;">Aucun joueur banni pour le moment.</p>`;
+    return;
+  }
+
+  list.innerHTML = bans
+    .map((b) => `
+      <div class="field-row" style="border-bottom:1px solid var(--border-color,#333); padding:10px 0;">
+        <div>
+          <strong>${escapeHtml(b.name || b.player || 'Joueur inconnu')}</strong><br>
+          <span class="panel-sub">${escapeHtml(b.reason || 'Aucune raison indiquée')}</span>
+        </div>
+        <span class="mono">${escapeHtml(b.date || b.expires || '')}</span>
+      </div>`)
+    .join('');
+}
+
+document.getElementById('refresh-fivembans-btn')?.addEventListener('click', loadFivemBans);
 
 async function loadGuilds() {
   state.guilds = await api('GET', '/api/discord/guilds');
@@ -926,5 +990,6 @@ document.addEventListener('DOMContentLoaded', () => {
   await refreshStatus();
   await loadSettings();
   await loadGuilds();
+  await loadFivemConfig();
   setInterval(refreshStatus, 5000);
 })();
