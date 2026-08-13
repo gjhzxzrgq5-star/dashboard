@@ -8,6 +8,7 @@ const MySQLStore = require('express-mysql-session')(session);
 const store = require('../lib/store');
 const bot = require('../lib/bot');
 const { pool: db } = require('../lib/db');
+const { isValidEmoji } = require('../lib/config');
 
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -440,6 +441,15 @@ function createDashboardServer() {
     for (const t of types) {
       if (!t.id || !t.label || !t.emoji) {
         return res.status(400).json({ error: 'Chaque type de ticket doit avoir un id, un label et un emoji.' });
+      }
+      // Avant : aucune validation de l'emoji ici. Un emoji invalide (texte
+      // libre, ZWJ cassé...) n'était détecté qu'au moment d'envoyer le panel
+      // sur Discord, avec une erreur "COMPONENT_INVALID_EMOJI" qui bloquait
+      // TOUT le panel — pas seulement le type de ticket concerné.
+      if (!isValidEmoji(t.emoji)) {
+        return res.status(400).json({
+          error: `Emoji invalide pour "${t.label}" : "${t.emoji}". Utilise un emoji Unicode (ex: 🎫) ou un emoji personnalisé du serveur (ex: <:nom:1234567890>).`,
+        });
       }
     }
     const ids = types.map((t) => t.id);
