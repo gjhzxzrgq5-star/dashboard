@@ -471,6 +471,53 @@ function createDashboardServer() {
     res.json(open);
   });
 
+  // ── Console live (répondre aux tickets sans quitter le dashboard) ──
+  api.get('/tickets/:id/messages', async (req, res) => {
+    if (!bot.client || bot.status !== 'online') {
+      return res.status(503).json({ error: 'Le bot est hors ligne, impossible de lire les messages.' });
+    }
+    try {
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
+      const ticket = JSON.parse(rows[0].data);
+
+      const channel = await bot.client.channels.fetch(ticket.channelId);
+      const messages = await channel.messages.fetch({ limit: 30 });
+      const list = [...messages.values()].reverse().map((m) => ({
+        sender: m.author.bot ? (m.content.startsWith('**[Dashboard]') ? 'Staff (Dashboard)' : 'Bot') : m.author.username,
+        text: m.content,
+        time: m.createdAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      }));
+
+      res.json({
+        ticket: { id: ticket.id, userTag: ticket.userTag, typeId: ticket.typeId, status: ticket.status },
+        messages: list,
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.post('/tickets/:id/reply', async (req, res) => {
+    if (!bot.client || bot.status !== 'online' || !bot.ticketManager) {
+      return res.status(503).json({ error: 'Le bot est hors ligne, impossible d\'envoyer un message.' });
+    }
+    const message = String(req.body?.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'Message vide.' });
+
+    try {
+      const [rows] = await db.query('SELECT data FROM tickets WHERE id = ?', [req.params.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Ticket introuvable.' });
+      const ticket = JSON.parse(rows[0].data);
+
+      const staffLabel = req.session.discordUser?.username || 'Staff';
+      await bot.ticketManager.sendDashboardReply(ticket, staffLabel, message);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   api.get('/tickets/export.csv', async (req, res) => {
     const tickets = await readTickets();
     const csv = toCsv(tickets);
