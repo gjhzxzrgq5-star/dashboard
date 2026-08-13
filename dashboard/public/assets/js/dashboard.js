@@ -245,6 +245,15 @@ document.getElementById('save-token-btn')?.addEventListener('click', async () =>
     setTimeout(async () => {
       await loadSettings();
       await loadGuilds();
+      // Le bot vient (normalement) de se reconnecter : on tente de republier
+      // le panel et on remonte le vrai résultat, au lieu de laisser ça se
+      // passer silencieusement en tâche de fond sans aucun retour visible.
+      try {
+        await api('POST', '/api/bot/refresh-panel');
+        toast('Bot connecté, panel republié dans le salon configuré.');
+      } catch (err) {
+        toast(`Bot connecté, mais le panel n'a pas pu être envoyé : ${err.message}`, true);
+      }
     }, 2500);
   } catch (err) {
     toast(err.message, true);
@@ -266,7 +275,15 @@ document.getElementById('save-general-btn')?.addEventListener('click', async () 
   try {
     const res = await api('POST', '/api/settings/bot', patch);
     state.bot = { ...state.bot, ...res.bot };
-    toast('Configuration enregistrée.');
+    // res.panel contient le vrai résultat de la republication tentée côté
+    // serveur juste après la sauvegarde (voir /api/settings/bot).
+    if (res.panel && !res.panel.ok) {
+      toast(`Configuration enregistrée, mais le panel n'a pas pu être republié : ${res.panel.reason}`, true);
+    } else if (res.panel && res.panel.ok) {
+      toast('Configuration enregistrée et panel republié.');
+    } else {
+      toast('Configuration enregistrée.');
+    }
   } catch (err) {
     toast(err.message, true);
   }
