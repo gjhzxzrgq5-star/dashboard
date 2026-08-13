@@ -685,9 +685,10 @@ async function loadTickets() {
   const ticketSelect = document.getElementById('select-active-ticket');
   if (!ticketSelect) return;
 
+  const previousValue = ticketSelect.value;
+
   try {
-    const response = await fetch('/api/tickets');
-    const tickets = await response.json();
+    const tickets = await api('GET', '/api/tickets/open');
 
     ticketSelect.innerHTML = '<option value="">-- Sélectionner un ticket ouvert --</option>';
     window.activeTicketsData = {};
@@ -696,27 +697,46 @@ async function loadTickets() {
       window.activeTicketsData[ticket.id] = ticket;
       const option = document.createElement('option');
       option.value = ticket.id;
-      option.textContent = `#${ticket.name}`;
+      option.textContent = `#${ticket.id} — ${ticket.userTag || 'inconnu'} (${typeLabel(ticket.typeId)})`;
       ticketSelect.appendChild(option);
     });
+
+    if ([...ticketSelect.options].some((o) => o.value === previousValue)) {
+      ticketSelect.value = previousValue;
+    }
   } catch (err) {
     console.error('Erreur de connexion au bot :', err);
+    toast(err.message, true);
   }
 }
 
-function renderMessages(ticketId) {
+async function renderMessages(ticketId) {
   const chatMessages = document.getElementById('chat-messages-container');
   if (!chatMessages) return;
 
-  chatMessages.innerHTML = '';
-  const ticket = window.activeTicketsData[ticketId];
-
-  if (!ticketId || !ticket || !ticket.messages) {
+  if (!ticketId) {
     chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Sélectionne un ticket pour voir le fil de discussion...</p>';
     return;
   }
 
-  ticket.messages.forEach((msg) => {
+  chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Chargement…</p>';
+
+  let data;
+  try {
+    data = await api('GET', `/api/tickets/${encodeURIComponent(ticketId)}/messages`);
+  } catch (err) {
+    chatMessages.innerHTML = `<p style="color:#e04b4b; text-align:center; margin:auto;">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  chatMessages.innerHTML = '';
+
+  if (!data.messages.length) {
+    chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Aucun message pour l\'instant.</p>';
+    return;
+  }
+
+  data.messages.forEach((msg) => {
     const msgDiv = document.createElement('div');
     msgDiv.style.padding = '8px 12px';
     msgDiv.style.borderRadius = '6px';
@@ -724,7 +744,7 @@ function renderMessages(ticketId) {
     msgDiv.style.maxWidth = '80%';
     msgDiv.style.fontSize = '13px';
 
-    if (msg.sender === 'Staff' || msg.sender === 'Bot') {
+    if (msg.sender.startsWith('Staff') || msg.sender === 'Bot') {
       msgDiv.style.background = 'rgba(88, 101, 242, 0.2)';
       msgDiv.style.borderLeft = '3px solid #5865f2';
       msgDiv.style.alignSelf = 'flex-end';
@@ -744,26 +764,18 @@ function renderMessages(ticketId) {
 async function sendMessage() {
   const ticketSelect = document.getElementById('select-active-ticket');
   const chatInput = document.getElementById('live-chat-input');
-  
+
   const activeTicketId = ticketSelect?.value;
   const text = chatInput?.value.trim();
 
   if (!activeTicketId || !text) return;
 
   try {
-    const response = await fetch('/api/tickets/reply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channelId: activeTicketId, message: text }),
-    });
-
-    if (response.ok) {
-      chatInput.value = '';
-      await loadTickets();
-      renderMessages(activeTicketId);
-    }
+    await api('POST', `/api/tickets/${encodeURIComponent(activeTicketId)}/reply`, { message: text });
+    chatInput.value = '';
+    await renderMessages(activeTicketId);
   } catch (err) {
-    alert("Impossible d'envoyer le message sur Discord.");
+    toast(err.message, true);
   }
 }
 
