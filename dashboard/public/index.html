@@ -3,1045 +3,247 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard — MP MOI</title>
-<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+<title>Ticket Bot — Choisis ton offre</title>
 <link rel="stylesheet" href="/assets/css/style.css">
 <style>
-  .icon-svg {
-    vertical-align: middle;
-    display: inline-block;
-    flex-shrink: 0;
+  /* ── Nav ────────────────────────────────────────────── */
+  .landing-nav {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 1100px; margin: 0 auto; padding: 28px 24px 0;
   }
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
+  .landing-brand { display: flex; align-items: center; gap: 12px; }
+  .landing-brand .auth-logo { margin: 0; width: 40px; height: 40px; font-size: 18px; }
+  .landing-brand span { font-family: var(--font-display); font-weight: 700; font-size: 18px; }
+  .btn-nav-login {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); font-weight: 600; font-size: 14px; text-decoration: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
-  .live-chat-box {
-    display: flex;
-    flex-direction: column;
-    height: 350px;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 8px;
-    overflow: hidden;
-    background: rgba(0, 0, 0, 0.2);
-  }
-  .chat-messages {
-    flex: 1;
-    padding: 12px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .chat-input-row {
-    display: flex;
-    padding: 8px;
-    background: rgba(0, 0, 0, 0.4);
-    gap: 8px;
-  }
-  .changelog-tag {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: bold;
-    text-transform: uppercase;
-    margin-right: 8px;
-  }
-  .tag-feat { background: rgba(0, 223, 216, 0.2); color: #00dfd8; border: 1px solid #00dfd8; }
-  .tag-fix { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
-  .tag-imp { background: rgba(255, 184, 0, 0.2); color: #ffb800; border: 1px solid #ffb800; }
-  .changelog-list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0 0;
-  }
-  .changelog-list li {
-    margin-bottom: 8px;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-  }
-  .tickets-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 10px;
-  }
-  .tickets-table th, .tickets-table td {
-    padding: 12px;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-  }
-  .tickets-table th {
-    background: rgba(0, 0, 0, 0.3);
-    color: #888;
-    font-size: 12px;
-    text-transform: uppercase;
-  }
-  .badge-status {
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    background: rgba(46, 204, 113, 0.2);
-    color: #2ecc71;
-    border: 1px solid #2ecc71;
-  }
-  .sub-status-badge {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: bold;
-  }
-  .sub-active { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71; }
-  .sub-inactive { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
-  .role-chip {
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: bold;
-    background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-  }
-  .admin-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .admin-row:last-child { border-bottom: none; }
-  .admin-row .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .admin-row select { width: auto; }
-  .payment-method-card {
-    border: 1px solid var(--border-color, #333);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 14px;
-    background: rgba(0, 0, 0, 0.15);
-  }
-  .payment-method-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-  .payment-method-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: bold;
-    font-size: 15px;
-  }
-  .payment-logo {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: bold;
-    color: #fff;
-    flex-shrink: 0;
-  }
-  .payment-logo.revolut { background: #0666EB; }
-  .payment-logo.paypal { background: #003087; }
-  .renew-checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
-    font-size: 13px;
-    color: #ccc;
-  }
-  .cfx-preview-box {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color, #333);
-    background: rgba(0, 0, 0, 0.2);
-    font-size: 13px;
-  }
-  .cfx-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #555;
-    flex-shrink: 0;
-  }
-  .cfx-dot.online { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
-  .cfx-dot.offline { background: #ff4d4d; box-shadow: 0 0 6px #ff4d4d; }
+  .btn-nav-login:hover { border-color: var(--cyan); box-shadow: 0 0 12px var(--glow-cyan); }
 
-  /* ── Accordéon "liste Discord" pour Configuration générale ── */
-  .settings-accordion {
-    border: 1px solid var(--border-color, #333);
-    border-radius: 10px;
-    margin-bottom: 12px;
-    overflow: hidden;
-    background: rgba(0, 0, 0, 0.15);
+  /* ── Hero ───────────────────────────────────────────── */
+  .hero { max-width: 720px; margin: 64px auto 56px; padding: 0 24px; text-align: center; }
+  .hero h1 { font-size: 38px; line-height: 1.15; margin-bottom: 16px; }
+  .hero h1 .accent {
+    background: linear-gradient(135deg, var(--cyan), var(--amber));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  .settings-accordion > summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 16px 18px;
-    cursor: pointer;
-    list-style: none;
-    user-select: none;
-    transition: background 0.15s ease;
-  }
-  .settings-accordion > summary::-webkit-details-marker { display: none; }
-  .settings-accordion > summary::marker { content: ""; }
-  .settings-accordion > summary:hover { background: rgba(255, 255, 255, 0.04); }
-  .settings-accordion[open] > summary { border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08)); }
+  .hero p { color: var(--text-muted); font-size: 16px; line-height: 1.6; margin: 0; }
 
-  .accordion-summary-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
+  /* ── Pricing ────────────────────────────────────────── */
+  .pricing-section { max-width: 940px; margin: 0 auto; padding: 0 24px 80px; }
+  .pricing-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
   }
-  .accordion-icon {
-    flex-shrink: 0;
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    background: rgba(88, 101, 242, 0.15);
-    color: var(--primary-color, #5865F2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .plan-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px 32px;
+    display: flex; flex-direction: column;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
   }
-  .accordion-title-block { min-width: 0; }
-  .accordion-title-block .accordion-title {
-    font-weight: 700;
-    font-size: 15px;
-    display: block;
+  .plan-card:hover { transform: translateY(-3px); }
+  .plan-card.featured { border-color: rgba(196, 72, 221, 0.5); box-shadow: 0 0 30px var(--glow-cyan); }
+  .plan-badge {
+    position: absolute; top: -13px; right: 28px;
+    background: linear-gradient(135deg, var(--cyan), var(--amber));
+    color: #fff; font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+    padding: 5px 14px; border-radius: 20px;
+    box-shadow: 0 4px 14px var(--glow-cyan);
   }
-  .accordion-title-block .accordion-sub {
-    font-size: 12.5px;
-    color: #888;
-    margin-top: 2px;
-    display: block;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .plan-name { font-family: var(--font-display); font-size: 20px; margin-bottom: 6px; }
+  .plan-desc { color: var(--text-muted); font-size: 14px; margin: 0 0 22px; min-height: 40px; }
+  .plan-price { display: flex; align-items: baseline; gap: 6px; margin-bottom: 26px; }
+  .plan-price .amount { font-family: var(--font-display); font-size: 40px; font-weight: 700; }
+  .plan-price .cycle { color: var(--text-muted); font-size: 14px; }
+  .plan-features { list-style: none; padding: 0; margin: 0 0 30px; display: flex; flex-direction: column; gap: 13px; flex: 1; }
+  .plan-features li { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text); }
+  .plan-features li.disabled { color: var(--text-muted); opacity: 0.55; }
+  .plan-features svg { flex-shrink: 0; margin-top: 2px; color: var(--cyan); }
+  .plan-features li.disabled svg { color: var(--text-muted); }
+  .btn-plan {
+    width: 100%; padding: 14px 20px; border-radius: 10px;
+    font-family: var(--font-body); font-weight: 600; font-size: 15px;
+    cursor: pointer; text-align: center;
   }
-  .accordion-chevron {
-    flex-shrink: 0;
-    color: #888;
-    transition: transform 0.2s ease;
-  }
-  .settings-accordion[open] .accordion-chevron { transform: rotate(90deg); }
 
-  .accordion-body {
-    padding: 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  .login-note { text-align: center; margin-top: 40px; color: var(--text-muted); font-size: 14px; }
+  .login-note a { color: var(--cyan); font-weight: 600; }
+
+  /* ── Modal paiement ───────────────────────────────────── */
+  .pay-option {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 18px; margin-bottom: 12px;
+    border: 1px solid var(--border); border-radius: 12px;
+    text-decoration: none; color: var(--text);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
   }
-  .accordion-badge {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: rgba(46, 204, 113, 0.15);
-    color: #2ecc71;
-    border: 1px solid rgba(46, 204, 113, 0.4);
-    margin-left: 8px;
-    flex-shrink: 0;
+  .pay-option:hover { border-color: var(--cyan); box-shadow: 0 0 14px var(--glow-cyan); transform: translateY(-1px); }
+  .pay-option .payment-logo {
+    width: 34px; height: 34px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: #fff; flex-shrink: 0; font-size: 15px;
+  }
+  .pay-option .payment-logo.revolut { background: #0666EB; }
+  .pay-option .payment-logo.paypal { background: #003087; }
+  .pay-option .pay-text { flex: 1; }
+  .pay-option .pay-title { font-weight: 600; font-size: 15px; }
+  .pay-option .pay-sub { font-size: 13px; color: var(--text-muted); }
+  .pay-summary {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 22px;
+  }
+  .pay-summary .plan { font-weight: 600; }
+  .pay-summary .price { font-family: var(--font-display); color: var(--cyan); font-weight: 700; }
+
+  @media (max-width: 720px) {
+    .pricing-grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 30px; }
   }
 </style>
 </head>
 <body>
-<div class="app">
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="mark">
-        <svg class="icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><path d="M12 6v12" stroke-dasharray="2 2"/></svg>
+
+<nav class="landing-nav">
+  <div class="landing-brand">
+    <div class="auth-logo">🎫</div>
+    <span>Ticket Bot</span>
+  </div>
+  <a href="/login" class="btn-nav-login">Se connecter</a>
+</nav>
+
+<section class="hero">
+  <h1>Choisis ton <span class="accent">offre</span></h1>
+  <p>Sélectionne le plan adapté à ton serveur, règle en un clic via Revolut ou PayPal, puis connecte-toi avec Discord pour accéder à ton dashboard.</p>
+</section>
+
+<section class="pricing-section">
+  <div class="pricing-grid">
+
+    <!-- ── Offre Standard ─────────────────────────────── -->
+    <div class="plan-card" id="plan-standard">
+      <div class="plan-name">Standard</div>
+      <p class="plan-desc">L'essentiel pour gérer les tickets de ton serveur.</p>
+      <div class="plan-price">
+        <span class="amount">4,99&nbsp;€</span>
+        <span class="cycle">/ mois</span>
       </div>
-      <div class="name">MP MOI</div>
+      <ul class="plan-features">
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Bot de tickets sur 1 serveur Discord</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Dashboard web & statistiques de base</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Console live & export CSV</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Support standard (48h)</li>
+        <li class="disabled"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Intégration FiveM</li>
+        <li class="disabled"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Sauvegardes automatiques</li>
+      </ul>
+      <button class="btn-plan btn-ghost" onclick="openPayModal('standard')">Choisir cette offre</button>
     </div>
 
-    <div class="nav-item active" data-view="overview">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9c3.9 3.9 3.9 10.3 0 14.2"/></svg>
-      Vue d'ensemble
-    </div>
-    <div class="nav-item" data-view="subscription">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-      Gestion & Abonnement
-    </div>
-    <div class="nav-item" data-view="open-tickets">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5v2"/><path d="M15 11v2"/><path d="M15 17v2"/><path d="M5 5h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4V7a2 2 0 0 1 2-2z"/></svg>
-      Tickets ouverts
-    </div>
-    <div class="nav-item" data-view="livechat">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      Live Console & Chat
-    </div>
-    <div class="nav-item" data-view="stats">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      Statistiques & Performance
-    </div>
-    <div class="nav-item" data-view="connection">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-2 2l-2 2m2-2l2 2m-4-2l2-2"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.4 11.6L21 2"/></svg>
-      Connexion bot
-    </div>
-    <div class="nav-item" data-view="general">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      Configuration générale
-    </div>
-    <div class="nav-item" data-view="fivembans">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-      Bannis FiveM
-    </div>
-    <div class="nav-item" data-view="customization">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 1 0 10 10"/></svg>
-      Studio & Thèmes
-    </div>
-    <div class="nav-item" data-view="types">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-      Types de tickets
-    </div>
-    <div class="nav-item" data-view="access">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      Accès admin
-    </div>
-    <div class="nav-item" data-view="changelog">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-      Patch Notes
+    <!-- ── Offre Premium ──────────────────────────────── -->
+    <div class="plan-card featured" id="plan-premium">
+      <span class="plan-badge">Populaire</span>
+      <div class="plan-name">Premium</div>
+      <p class="plan-desc">Toutes les fonctionnalités, pour les serveurs qui veulent aller plus loin.</p>
+      <div class="plan-price">
+        <span class="amount">9,99&nbsp;€</span>
+        <span class="cycle">/ mois</span>
+      </div>
+      <ul class="plan-features">
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Tout ce qui est inclus dans Standard</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Intégration FiveM</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Sauvegardes automatiques</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Traitement prioritaire des tickets</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Support prioritaire (24h)</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Serveurs Discord illimités</li>
+      </ul>
+      <button class="btn-plan btn-primary" onclick="openPayModal('premium')">Choisir cette offre</button>
     </div>
 
-    <div class="sidebar-footer">
-      <div class="user-card" id="user-card">
-        <img id="user-avatar" class="user-avatar" alt="">
-        <div class="user-meta">
-          <div class="user-name" id="user-name">…</div>
-          <div class="user-sub" id="user-role-label">Administrateur</div>
-        </div>
-      </div>
-      <div class="status-pill" id="status-pill">
-        <span class="status-dot" id="status-dot"></span>
-        <span id="status-text">Chargement…</span>
-      </div>
-      <button class="btn-ghost" id="logout-btn" style="width:100%; margin-top:12px;">Déconnexion</button>
-    </div>
-  </aside>
+  </div>
 
-  <main class="main">
+  <p class="login-note">Déjà client ? <a href="/login">Connecte-toi avec Discord</a> pour accéder à ton dashboard.</p>
+</section>
 
-    <section class="view active" id="view-overview">
-      <div class="page-header">
-        <h1>Vue d'ensemble</h1>
-        <p>État de la connexion et actions rapides.</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Statut du bot</h3>
-        <p class="panel-sub">Rafraîchi automatiquement toutes les 5 secondes.</p>
-        <div id="overview-status" style="font-size:14px; line-height:1.9;"></div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Actions rapides</h3>
-        <p class="panel-sub">Republie le panel de tickets ou force une reconnexion.</p>
-        <div style="display:flex; gap:10px;">
-          <button id="refresh-panel-btn" style="display:inline-flex; align-items:center; gap:8px;">
-            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            Republier le panel
-          </button>
-          <button id="restart-bot-btn" style="display:inline-flex; align-items:center; gap:8px;">
-            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            Reconnecter le bot
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <section class="view" id="view-subscription">
-      <div class="page-header">
-        <h1>Gestion & Abonnement</h1>
-        <p>Consultez votre identifiant d'acheteur et gérez vos options d'abonnement.</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Informations de l'Acheteur</h3>
-        <p class="panel-sub">Renseignez votre identifiant client/acheteur pour lier vos options souscrites.</p>
-        <div class="field">
-          <label for="input-customer-id">Identifiant d'acheteur (Customer ID)</label>
-          <input type="text" id="input-customer-id" class="mono" placeholder="CUST-12345-XYZ">
-          <p class="field-hint">Cet identifiant débloque les fonctionnalités avancées sur votre compte.</p>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Offre & Statut</h3>
-        <div class="field-row" style="align-items:center; justify-content:space-between;">
-          <div>
-            <p style="margin:0; font-weight:bold; font-size:16px;">Statut actuel : <span id="sub-status-badge" class="sub-status-badge sub-inactive">Inactif</span></p>
-          </div>
-          <div class="field" style="margin:0; min-width: 200px;">
-            <label for="select-plan-type">Formule souscrite</label>
-            <select id="select-plan-type">
-              <option value="free">Gratuit / Starter</option>
-              <option value="pro">Pro (Mensuel)</option>
-              <option value="enterprise">Entreprise / Premium</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="field-row" style="align-items:center; margin-top:15px;">
-          <input type="checkbox" id="toggle-auto-renew" style="width:auto;">
-          <label for="toggle-auto-renew" style="margin:0;">Renouvellement automatique de l'abonnement</label>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Moyens de paiement</h3>
-        <p class="panel-sub">Renseigne tes identifiants Revolut et/ou PayPal pour recevoir les paiements de tes clients, et active le renouvellement automatique par moyen de paiement.</p>
-
-        <div class="payment-method-card">
-          <div class="payment-method-header">
-            <div class="payment-method-title">
-              <span class="payment-logo revolut">R</span>
-              Revolut
-            </div>
-            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:normal; cursor:pointer;">
-              <input type="checkbox" id="toggle-revolut-enabled" style="width:auto;">
-              Activer
-            </label>
-          </div>
-          <div class="field">
-            <label for="input-revolut-tag">Identifiant Revolut (@RevolutTag)</label>
-            <input type="text" id="input-revolut-tag" class="mono" placeholder="@magikarpe">
-          </div>
-          <div class="field">
-            <label for="input-revolut-link">Lien de paiement Revolut.me</label>
-            <input type="url" id="input-revolut-link" class="mono" placeholder="https://revolut.me/magikarpe">
-            <p class="field-hint">Trouvable dans l'app Revolut → Profil → "Recevoir" → Partager le lien.</p>
-          </div>
-          <div class="renew-checkbox-row">
-            <input type="checkbox" id="toggle-revolut-renew" style="width:auto;">
-            <label for="toggle-revolut-renew" style="margin:0;">Autoriser le renouvellement automatique via Revolut</label>
-          </div>
-        </div>
-
-        <div class="payment-method-card">
-          <div class="payment-method-header">
-            <div class="payment-method-title">
-              <span class="payment-logo paypal">P</span>
-              PayPal
-            </div>
-            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:normal; cursor:pointer;">
-              <input type="checkbox" id="toggle-paypal-enabled" style="width:auto;">
-              Activer
-            </label>
-          </div>
-          <div class="field">
-            <label for="input-paypal-email">Email PayPal</label>
-            <input type="email" id="input-paypal-email" class="mono" placeholder="magikarpedev@outlook.fr">
-          </div>
-          <div class="field">
-            <label for="input-paypal-link">Lien PayPal.me</label>
-            <input type="url" id="input-paypal-link" class="mono" placeholder="https://paypal.me/magikarpe">
-          </div>
-          <div class="renew-checkbox-row">
-            <input type="checkbox" id="toggle-paypal-renew" style="width:auto;">
-            <label for="toggle-paypal-renew" style="margin:0;">Autoriser le renouvellement automatique via PayPal</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Options Complémentaires</h3>
-        <p class="panel-sub">Activez les modules additionnels liés à votre identifiant d'acheteur.</p>
-        
-        <div style="display:flex; flex-direction:column; gap:12px; margin-top:10px;">
-          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-            <input type="checkbox" id="opt-fivem" style="width:auto;">
-            <span><b>Module Intégration FiveM Premium</b> — Gestion directe des bans et logs serveur.</span>
-          </label>
-          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-            <input type="checkbox" id="opt-priority" style="width:auto;">
-            <span><b>Support Prioritaire 24/7</b> — Assistance technique dédiée en direct.</span>
-          </label>
-          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-            <input type="checkbox" id="opt-backups" style="width:auto;">
-            <span><b>Sauvegardes Automatiques MySQL</b> — Historique et sauvegardes quotidiennes.</span>
-          </label>
-        </div>
-      </div>
-
-      <button class="btn-primary" id="save-sub-btn" style="margin-top:15px;">Enregistrer les informations d'abonnement</button>
-    </section>
-
-    <section class="view" id="view-open-tickets">
-      <div class="page-header">
-        <h1>Tickets Ouverts</h1>
-        <p>Consultez la liste de tous les tickets actuellement actifs.</p>
-      </div>
-
-      <div class="panel">
-        <div class="toolbar-row" style="margin-bottom: 16px;">
-          <h3 class="panel-title">Liste des tickets en cours</h3>
-          <button class="btn-ghost" id="refresh-open-tickets-btn">Actualiser</button>
-        </div>
-        
-        <div style="overflow-x: auto;">
-          <table class="tickets-table">
-            <thead>
-              <tr>
-                <th>ID / Salon</th>
-                <th>Utilisateur</th>
-                <th>Type</th>
-                <th>Statut</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="open-tickets-list">
-              <tr>
-                <td colspan="5" style="text-align: center; color: #888; padding: 20px;">
-                  Chargement des tickets ouverts...
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="view" id="view-livechat">
-      <div class="page-header">
-        <h1>Live Support Console</h1>
-        <p>Réponds en direct aux tickets Discord sans quitter le dashboard.</p>
-      </div>
-
-      <div class="panel">
-        <div class="field-row">
-          <div class="field" style="flex:1;">
-            <label for="select-active-ticket">Ticket actif</label>
-            <select id="select-active-ticket">
-              <option value="">-- Sélectionner un ticket ouvert --</option>
-            </select>
-          </div>
-          <button class="btn-ghost" id="refresh-chat-btn" style="height:42px; align-self: flex-end;">Actualiser</button>
-        </div>
-
-        <div class="live-chat-box">
-          <div class="chat-messages" id="chat-messages-container">
-            <p style="color:#777; text-align:center; margin:auto;">Sélectionne un ticket pour voir le fil de discussion...</p>
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="live-chat-input" placeholder="Écris ton message ici..." style="flex:1;">
-            <button class="btn-primary" id="send-chat-btn">Envoyer</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="view" id="view-stats">
-      <div class="page-header">
-        <h1>Statistiques & Analytics</h1>
-        <p>Vue d'ensemble de l'activité des tickets et temps de réponse.</p>
-      </div>
-
-      <div class="stat-grid" id="stat-grid"></div>
-
-      <div class="panel">
-        <h3 class="panel-title">Efficacité du Staff</h3>
-        <p class="panel-sub">Temps moyen de réponse : <b id="avg-response-time" style="color:var(--primary-color, #5865F2);">2 min 14s</b></p>
-      </div>
-
-      <div class="panel">
-        <div class="toolbar-row" style="margin-bottom:16px;">
-          <div>
-            <h3 class="panel-title">Répartition par type</h3>
-            <p class="panel-sub" style="margin:0;">Nombre de tickets créés, tous statuts confondus.</p>
-          </div>
-          <button class="btn-ghost" id="export-csv-btn" style="display:inline-flex; align-items:center; gap:8px;">
-            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Exporter en CSV
-          </button>
-        </div>
-        <div id="stat-by-type"></div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Activité récente</h3>
-        <p class="panel-sub">Les 8 derniers tickets créés ou fermés.</p>
-        <div id="stat-recent"></div>
-      </div>
-    </section>
-
-    <section class="view" id="view-connection">
-      <div class="page-header">
-        <h1>Connexion bot</h1>
-        <p>Les tokens des bots Discord (Developer Portal → Bot → Reset Token).</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Bot principal (tickets & modmail)</h3>
-        <div class="field">
-          <label for="input-token">Token du bot principal</label>
-          <input type="password" id="input-token" class="mono" placeholder="Colle ton token ici">
-          <p class="field-hint">Le token affiché est masqué pour ta sécurité. Colle un nouveau token pour le remplacer.</p>
-        </div>
-        <button class="btn-primary" id="save-token-btn">Enregistrer et connecter</button>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Bot Status FiveM (secondaire)</h3>
-        <p class="panel-sub">Un second bot Discord dédié, uniquement utilisé pour afficher le statut en direct de ton serveur FiveM (joueurs en ligne, nom du salon vocal, embed). Doit être une application Discord distincte du bot principal ci-dessus.</p>
-        <div class="field">
-          <label for="input-status-token">Token du bot status</label>
-          <input type="password" id="input-status-token" class="mono" placeholder="Colle le token du second bot ici">
-          <p class="field-hint">Developer Portal → New Application → Bot → Reset Token. Pense à inviter ce bot sur ton serveur Discord staff avec les permissions "Gérer les salons" si tu utilises le mode "nom de salon vocal".</p>
-        </div>
-        <button class="btn-primary" id="save-status-token-btn">Enregistrer et connecter le bot status</button>
-      </div>
-    </section>
-
-    <section class="view" id="view-general">
-      <div class="page-header">
-        <h1>Configuration générale</h1>
-        <p>Où le panel est envoyé, et sur quel serveur les tickets sont créés.</p>
-      </div>
-
-      <details class="settings-accordion" open>
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-            </span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Panel de tickets</span>
-              <span class="accordion-sub">Serveur, salon et apparence du message avec les boutons</span>
-            </span>
-          </span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <div class="field-row">
-            <div class="field">
-              <label for="select-panel-guild">Serveur</label>
-              <select id="select-panel-guild"></select>
-            </div>
-            <div class="field">
-              <label for="select-panel-channel">Salon</label>
-              <select id="select-panel-channel"></select>
-            </div>
-          </div>
-          <div class="field">
-            <label for="input-panel-title">Titre du panel</label>
-            <input type="text" id="input-panel-title">
-          </div>
-          <div class="field">
-            <label for="input-panel-desc">Description du panel</label>
-            <textarea id="input-panel-desc"></textarea>
-          </div>
-          <div class="field">
-            <label for="input-panel-banner">Image bannière (URL, optionnel)</label>
-            <input type="url" id="input-panel-banner" placeholder="https://...">
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label for="input-embed-color">Couleur des embeds</label>
-              <input type="text" id="input-embed-color" class="mono" placeholder="5865F2" maxlength="6">
-            </div>
-            <div class="field">
-              <label for="input-footer">Texte du pied de page</label>
-              <input type="text" id="input-footer">
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <details class="settings-accordion">
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            </span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Serveur staff</span>
-              <span class="accordion-sub">Où les salons de tickets sont créés par défaut</span>
-            </span>
-          </span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <div class="field-row">
-            <div class="field">
-              <label for="select-staff-guild">Serveur staff</label>
-              <select id="select-staff-guild"></select>
-            </div>
-            <div class="field">
-              <label for="select-staff-category">Catégorie des tickets par défaut (optionnel)</label>
-              <select id="select-staff-category"></select>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <details class="settings-accordion">
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">🌐</span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Configuration Serveur FiveM</span>
-              <span class="accordion-sub">Lien de connexion directe de ton serveur FiveM</span>
-            </span>
-          </span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <div class="field-row" style="align-items:center;">
-            <label for="toggle-fivem" style="margin:0; font-weight: bold;">Activer l'intégration FiveM</label>
-            <input type="checkbox" id="toggle-fivem" style="width:auto;">
-          </div>
-
-          <div id="fivem-options-container">
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🌐 Connexion FiveM</legend>
-              <div class="field">
-                <label for="input-fivem-url">Lien de connexion au serveur FiveM</label>
-                <input type="url" id="input-fivem-url" class="mono" placeholder="https://cfx.re/join/xxxxxx ou cfx.re/join/xxxxxx">
-              </div>
-            </fieldset>
-
-            <button class="btn-primary" id="save-fivem-btn">Enregistrer la config FiveM</button>
-          </div>
-        </div>
-      </details>
-
-      <details class="settings-accordion" id="status-bot-accordion">
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">📡</span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Bot Status FiveM (statut en direct)</span>
-              <span class="accordion-sub">Joueurs en ligne via le code CFX, dans un salon vocal et/ou un embed</span>
-            </span>
-          </span>
-          <span id="status-bot-badge" class="accordion-badge" style="display:none;">Actif</span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <p class="panel-sub" style="margin:0;">Nécessite le token du bot secondaire renseigné dans "Connexion bot".</p>
-
-          <div class="field-row" style="align-items:center;">
-            <label for="toggle-status-bot" style="margin:0; font-weight: bold;">Activer le bot de statut FiveM</label>
-            <input type="checkbox" id="toggle-status-bot" style="width:auto;">
-          </div>
-
-          <div id="status-bot-options-container">
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📡 Serveur CFX suivi</legend>
-
-              <div class="field">
-                <label for="input-cfx-code">Code CFX du serveur</label>
-                <input type="text" id="input-cfx-code" class="mono" placeholder="ex : abcd12 (derniers chiffres/code après cfx.re/join/)">
-                <p class="field-hint">Récupérable dans l'URL de connexion : cfx.re/join/<b>abcd12</b>. Tu peux aussi coller l'URL complète, le code sera extrait automatiquement.</p>
-              </div>
-
-              <div id="cfx-status-preview" class="cfx-preview-box">
-                <span class="cfx-dot" id="cfx-status-dot"></span>
-                <span id="cfx-status-text">Aucune donnée récupérée pour le moment.</span>
-              </div>
-
-              <button class="btn-ghost" id="test-cfx-btn" style="margin-top:12px;">Tester la connexion CFX</button>
-            </fieldset>
-
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📍 Affichage</legend>
-
-              <div class="field-row">
-                <div class="field">
-                  <label for="select-status-mode">Mode d'affichage</label>
-                  <select id="select-status-mode">
-                    <option value="voice-name">Nom de salon vocal (ex : "🟢 12/48 joueurs")</option>
-                    <option value="embed">Embed dans un salon textuel</option>
-                    <option value="both">Les deux</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="input-status-refresh">Intervalle de rafraîchissement (secondes)</label>
-                  <input type="number" id="input-status-refresh" min="30" step="10" placeholder="60">
-                  <p class="field-hint">Minimum 30s pour éviter le rate-limit Discord sur les renommages de salon.</p>
-                </div>
-              </div>
-
-              <div class="field-row">
-                <div class="field">
-                  <label for="select-status-guild">Serveur Discord</label>
-                  <select id="select-status-guild"></select>
-                </div>
-                <div class="field">
-                  <label for="select-status-channel">Salon (vocal ou textuel selon le mode)</label>
-                  <select id="select-status-channel"></select>
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="input-status-format">Format du nom de salon vocal</label>
-                <input type="text" id="input-status-format" class="mono" placeholder="🟢 {players}/{maxplayers} joueurs">
-                <p class="field-hint">Variables disponibles : <code>{players}</code>, <code>{maxplayers}</code>, <code>{hostname}</code>, <code>{status}</code>.</p>
-              </div>
-            </fieldset>
-
-            <button class="btn-primary" id="save-status-bot-btn">Enregistrer la config du bot status</button>
-          </div>
-        </div>
-      </details>
-
-      <button class="btn-primary" id="save-general-btn" style="margin-top:8px;">Enregistrer la configuration générale</button>
-    </section>
-
-    <section class="view" id="view-customization">
-      <div class="page-header">
-        <h1>Studio & Thèmes</h1>
-        <p>Gère l'apparence, l'effet de flou et les notifications de ton espace.</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Effets de Transparence (Glassmorphism)</h3>
-        <div class="field">
-          <label for="range-blur">Flou d'arrière-plan (Blur : <span id="blur-val">10</span>px)</label>
-          <input type="range" id="range-blur" min="0" max="30" value="10">
-        </div>
-        <div class="field">
-          <label for="range-opacity">Opacité des panneaux (<span id="opacity-val">80</span>%)</label>
-          <input type="range" id="range-opacity" min="20" max="100" value="80">
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Fond d'écran</h3>
-        <div class="field">
-          <label for="input-wallpaper-url">URL de l'image</label>
-          <input type="url" id="input-wallpaper-url" placeholder="https://exemple.com/image.png">
-        </div>
-        <div class="field">
-          <label for="input-wallpaper-file">Ou importer une image locale</label>
-          <input type="file" id="input-wallpaper-file" accept="image/*">
-        </div>
-        <div class="field">
-          <label>Aperçu</label>
-          <div id="wallpaper-preview" style="width: 100%; height: 140px; border-radius: 8px; border: 1px dashed var(--border-color, #ccc); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: #888;">
-            Aucun fond personnalisé
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Notifications Sonores</h3>
-        <div class="field-row" style="align-items:center;">
-          <label for="toggle-sound">Activer le son à l'arrivée d'un nouveau ticket</label>
-          <input type="checkbox" id="toggle-sound" style="width:auto;">
-        </div>
-      </div>
-
-      <div style="display: flex; gap: 10px; margin-top: 16px;">
-        <button class="btn-primary" id="save-theme-btn">Appliquer les modifications</button>
-        <button class="btn-ghost" id="reset-theme-btn">Réinitialiser par défaut</button>
-      </div>
-    </section>
-
-    <section class="view" id="view-types">
-      <div class="page-header">
-        <h1>Types de tickets</h1>
-        <p>Chaque type définit un bouton du panel, sa catégorie cible et les rôles staff autorisés.</p>
-      </div>
-
-      <div class="toolbar-row">
-        <div></div>
-        <button class="btn-primary" id="add-type-btn" style="display:inline-flex; align-items:center; gap:8px;">
-          <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Nouveau type
-        </button>
-      </div>
-
-      <div id="types-list"></div>
-    </section>
-
-    <section class="view" id="view-access">
-      <div class="page-header">
-        <h1>Accès admin</h1>
-        <p>Comptes Discord autorisés à se connecter à ce dashboard.</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Ajouter un administrateur</h3>
-        <p class="panel-sub">Récupère l'ID Discord de la personne (mode développeur → clic droit sur son profil → "Copier l'ID").</p>
-        <div class="field-row" style="align-items:flex-end;">
-          <div class="field" style="margin-bottom:0;">
-            <label for="input-new-admin">ID Discord</label>
-            <input type="text" id="input-new-admin" class="mono" placeholder="123456789012345678">
-          </div>
-          <div class="field" style="margin-bottom:0;">
-            <label for="input-new-admin-role">Rôle</label>
-            <select id="input-new-admin-role">
-              <option value="administrateur">Administrateur</option>
-              <option value="moderateur">Modérateur</option>
-              <option value="visiteur">Visiteur</option>
-            </select>
-          </div>
-          <button class="btn-primary" id="add-admin-btn" style="height:42px;">Ajouter</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Administrateurs actuels</h3>
-        <p class="panel-sub">
-          <b>Administrateur</b> : accès complet. ·
-          <b>Modérateur</b> : tickets, live chat, stats, bannis FiveM. ·
-          <b>Visiteur</b> : lecture seule (aperçu, stats, tickets, bannis FiveM).
-        </p>
-        <div id="admins-list"></div>
-      </div>
-    </section>
-
-    <section class="view" id="view-fivembans">
-      <div class="page-header">
-        <h1>Bannis FiveM</h1>
-        <p>Liste des joueurs bannis sur le serveur FiveM configuré.</p>
-      </div>
-
-      <div class="panel" id="fivembans-panel">
-        <div class="toolbar-row">
-          <div>
-            <h3 class="panel-title" style="margin-bottom:0;">Liste des bannis</h3>
-            <p class="panel-sub" id="fivembans-server-info" style="margin:4px 0 0;"></p>
-          </div>
-          <button class="btn-ghost" id="refresh-fivembans-btn">Actualiser</button>
-        </div>
-        <div id="fivembans-list"></div>
-      </div>
-    </section>
-
-    <section class="view" id="view-changelog">
-      <div class="page-header">
-        <h1>Patch Notes & Mises à jour</h1>
-        <p>Découvre l'historique des nouvelles fonctionnalités, améliorations et correctifs.</p>
-      </div>
-
-      <div class="panel">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h3 class="panel-title">Version 2.7.0</h3>
-          <span class="field-hint">Dernière mise à jour</span>
-        </div>
-        <ul class="changelog-list">
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Bot Status FiveM : affiche en direct le nombre de joueurs et l'état du serveur (via code CFX) dans un salon vocal et/ou un embed, avec un second bot Discord dédié.</li>
-          <li><span class="changelog-tag tag-feat">Nouveau</span> "Connexion bot" gère maintenant deux tokens distincts : bot principal (tickets/modmail) et bot status (secondaire).</li>
-        </ul>
-      </div>
-
-      <div class="panel">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h3 class="panel-title">Version 2.6.0</h3>
-        </div>
-        <ul class="changelog-list">
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Moyens de paiement Revolut & PayPal dans "Gestion & Abonnement", avec renouvellement automatique activable par moyen de paiement.</li>
-          <li><span class="changelog-tag tag-fix">Fix</span> "Republier le panel" affichait un succès même quand rien n'était envoyé (bot hors ligne, salon non configuré ou permissions manquantes) — le message d'erreur réel s'affiche désormais.</li>
-          <li><span class="changelog-tag tag-fix">Fix</span> L'onglet "Bannis FiveM" et la config FiveM n'étaient reliés à aucun script côté dashboard et restaient inertes — corrigé.</li>
-        </ul>
-      </div>
-
-      <div class="panel">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h3 class="panel-title">Version 2.5.0</h3>
-        </div>
-        <ul class="changelog-list">
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Onglet "Gestion & Abonnement" pour administrer les identifiants d'acheteurs.</li>
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Intégration des catégories personnalisées par type de ticket.</li>
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Messages de bienvenue personnalisés avec variables dynamiques (ex: <code>{user}</code>).</li>
-          <li><span class="changelog-tag tag-imp">Amélioration</span> Refonte graphique du Live Console & Support direct.</li>
-          <li><span class="changelog-tag tag-fix">Fix</span> Correction d'un bug de chargement lors de la sélection des rôles staff.</li>
-        </ul>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Version 2.3.0</h3>
-        <ul class="changelog-list">
-          <li><span class="changelog-tag tag-feat">Nouveau</span> Studio & Customisation avec mode Glassmorphism.</li>
-          <li><span class="changelog-tag tag-imp">Amélioration</span> Exportation des métriques et tickets en CSV.</li>
-        </ul>
-      </div>
-    </section>
-
-  </main>
-</div>
-
-<div class="modal-backdrop" id="type-modal-backdrop">
+<!-- ── Modal choix du moyen de paiement ─────────────────── -->
+<div class="modal-backdrop" id="pay-modal-backdrop">
   <div class="modal">
-    <h2 id="type-modal-title">Nouveau type de ticket</h2>
-    <input type="hidden" id="type-original-id">
-
-    <div class="field-row">
-      <div class="field" style="max-width:90px;">
-        <label for="type-emoji">Icône</label>
-        <input type="text" id="type-emoji" maxlength="60" placeholder="🎫 ou <:nom:1234567890>">
-      </div>
-      <div class="field">
-        <label for="type-label">Nom</label>
-        <input type="text" id="type-label" placeholder="Support">
-      </div>
+    <h2>Choisis ton moyen de paiement</h2>
+    <div class="pay-summary">
+      <span class="plan" id="pay-summary-plan">Offre Standard</span>
+      <span class="price" id="pay-summary-price">4,99 € / mois</span>
     </div>
 
-    <div class="field">
-      <label for="type-id">Identifiant technique</label>
-      <input type="text" id="type-id" class="mono" placeholder="support">
-      <p class="field-hint">Minuscules, sans espaces. Ne pas modifier après création si des tickets existent.</p>
-    </div>
+    <a href="#" id="pay-link-revolut" target="_blank" rel="noopener" class="pay-option">
+      <span class="payment-logo revolut">R</span>
+      <span class="pay-text">
+        <div class="pay-title">Payer avec Revolut</div>
+        <div class="pay-sub">Paiement instantané via Revolut.me</div>
+      </span>
+    </a>
 
-    <div class="field">
-      <label for="type-desc">Description</label>
-      <textarea id="type-desc" placeholder="Problème technique ou aide générale"></textarea>
-    </div>
+    <a href="#" id="pay-link-paypal" target="_blank" rel="noopener" class="pay-option">
+      <span class="payment-logo paypal">P</span>
+      <span class="pay-text">
+        <div class="pay-title">Payer avec PayPal</div>
+        <div class="pay-sub">Paiement sécurisé via PayPal.me</div>
+      </span>
+    </a>
 
-    <div class="field">
-      <label for="type-color">Couleur (hex sans #)</label>
-      <input type="text" id="type-color" class="mono" maxlength="6" placeholder="5865F2">
-    </div>
-
-    <div class="field">
-      <label for="type-category">Catégorie Discord spécifique (Optionnel)</label>
-      <select id="type-category">
-        <option value="">Utiliser la catégorie par défaut (Globale)</option>
-      </select>
-      <p class="field-hint">Laisse vide pour utiliser la catégorie configurée dans "Configuration générale".</p>
-    </div>
-      
-    <div class="field">
-      <label for="type-welcome-msg">Message de bienvenue personnalisé</label>
-      <textarea id="type-welcome-msg" rows="3" placeholder="Bienvenue {user} ! Un membre de l'équipe {role} va prendre en charge ton ticket."></textarea>
-      <p class="field-hint">Variables disponibles : <code>{user}</code> (mentionne l'utilisateur), <code>{server}</code> (nom du serveur).</p>
-    </div>
-
-    <div class="field">
-      <label>Rôles staff autorisés</label>
-      <div class="roles-picker" id="type-roles-picker"></div>
-      <p class="field-hint">Sélectionne le serveur staff dans "Configuration générale" pour voir les rôles disponibles.</p>
-    </div>
+    <p class="field-hint" style="margin-top:6px;">
+      Une fois le paiement effectué, tu recevras un <strong>code client</strong>. Connecte-toi avec ton compte Discord puis saisis ce code pour activer ton offre.
+    </p>
 
     <div class="modal-actions">
-      <button class="btn-ghost" id="type-cancel-btn">Annuler</button>
-      <button class="btn-danger" id="type-delete-btn" style="display:none;">Supprimer</button>
-      <button class="btn-primary" id="type-save-btn">Enregistrer</button>
+      <button class="btn-ghost" onclick="closePayModal()">Fermer</button>
+      <a href="/login" class="btn-primary" style="display:inline-flex; align-items:center; text-decoration:none; padding:12px 20px;">Se connecter</a>
     </div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<script>
+  // ── Configuration des offres & liens de paiement ──────────────
+  // ⚠️ Remplace les liens ci-dessous par tes vrais liens Revolut.me / PayPal.me
+  // (les mêmes que ceux configurés dans Dashboard → Gestion & Abonnement → Moyens de paiement).
+  const PLANS = {
+    standard: {
+      label: 'Offre Standard',
+      price: '4,99 € / mois',
+      revolutLink: 'https://revolut.me/tonpseudo?amount=4.99',
+      paypalLink: 'https://paypal.me/tonpseudo/4.99',
+    },
+    premium: {
+      label: 'Offre Premium',
+      price: '9,99 € / mois',
+      revolutLink: 'https://revolut.me/tonpseudo?amount=9.99',
+      paypalLink: 'https://paypal.me/tonpseudo/9.99',
+    },
+  };
 
-<script src="/assets/js/dashboard.js"></script>
+  const backdrop = document.getElementById('pay-modal-backdrop');
+
+  function openPayModal(planId) {
+    const plan = PLANS[planId];
+    if (!plan) return;
+    document.getElementById('pay-summary-plan').textContent = plan.label;
+    document.getElementById('pay-summary-price').textContent = plan.price;
+    document.getElementById('pay-link-revolut').href = plan.revolutLink;
+    document.getElementById('pay-link-paypal').href = plan.paypalLink;
+    backdrop.classList.add('show');
+  }
+
+  function closePayModal() {
+    backdrop.classList.remove('show');
+  }
+
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closePayModal();
+  });
+</script>
+
 </body>
 </html>
