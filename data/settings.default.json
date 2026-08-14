@@ -4,6 +4,7 @@
     "clientSecret": "",
     "redirectUri": "",
     "adminIds": [],
+    "adminRoles": {},
     "guildId": ""
   },
   "sessionSecret": null,
