@@ -7,9 +7,11 @@ const MySQLStore = require('express-mysql-session')(session);
 
 const { globalStore, tenantManager } = require('../lib/store');
 const botManager = require('../lib/botManager');
+const statusBotManager = require('../lib/statusBot');
 const { pool: db } = require('../lib/db');
 const { isValidEmoji } = require('../lib/config');
 const customerCodes = require('../lib/customerCodes');
+const { fetchServerStatus } = require('../lib/cfxApi');
 
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -52,6 +54,7 @@ async function resolveTenant(req, res, next) {
     req.tenantStore = store;
     req.tenantId = tenantId;
     req.bot = botManager.get(tenantId, store);
+    req.statusBot = statusBotManager.get(tenantId, store);
     next();
   } catch (err) {
     console.error('Erreur resolveTenant:', err.message);
@@ -516,6 +519,62 @@ function createDashboardServer() {
       bot: { ...updated, token: updated.token ? maskToken(updated.token) : '' },
       panel,
     });
+  });
+
+  // ── Bot status FiveM (second bot, distinct du bot principal) ───────
+  api.get('/settings/status-bot', (req, res) => {
+    const s = req.tenantStore.getStatusBot();
+    const live = req.statusBot.getStatus();
+    res.json({
+      statusBot: {
+        ...s,
+        token: s.token ? maskToken(s.token) : '',
+        lastServerStatus: live.lastServerStatus || s.lastServerStatus || null,
+        connectionStatus: live.status,
+        connectionError: live.lastError,
+      },
+      hasToken: !!s.token,
+    });
+  });
+
+  api.post('/settings/status-bot', async (req, res) => {
+    const patch = { ...req.body };
+    const isTokenChange = !!(patch.token && !patch.token.includes('•'));
+    if (patch.token && patch.token.includes('•')) delete patch.token;
+    const updated = req.tenantStore.setStatusBot(patch);
+
+    if (isTokenChange) {
+      // Nouveau token (ou changement) : on (re)connecte CE bot status.
+      await req.statusBot.restart();
+    }
+
+    res.json({
+      ok: true,
+      statusBot: { ...updated, token: updated.token ? maskToken(updated.token) : '' },
+    });
+  });
+
+  api.get('/statusbot/guilds', (req, res) => {
+    res.json(req.statusBot.listGuilds());
+  });
+
+  api.get('/statusbot/guilds/:guildId/channels', async (req, res) => {
+    try {
+      res.json(await req.statusBot.listChannels(req.params.guildId));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  api.post('/cfx/test', async (req, res) => {
+    const code = String(req.body?.code || '').trim();
+    if (!code) return res.status(400).json({ error: 'Code CFX manquant.' });
+    try {
+      const status = await fetchServerStatus(code);
+      res.json(status);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   api.post('/settings/ticket-types', (req, res) => {
