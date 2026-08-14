@@ -19,6 +19,17 @@
     "panelDescription": "Clique sur le bouton correspondant à ta demande pour ouvrir un ticket.\nLa discussion se déroulera **en message privé**.",
     "footerText": "Un seul ticket ouvert à la fois par utilisateur."
   },
+  "statusBot": {
+    "token": "",
+    "enabled": false,
+    "cfxCode": "",
+    "mode": "voice-name",
+    "refreshSeconds": 60,
+    "guildId": "",
+    "statusChannelId": "",
+    "nameFormat": "🟢 {players}/{maxplayers} joueurs",
+    "lastServerStatus": null
+  },
   "ticketTypes": [
     {
       "id": "support",
