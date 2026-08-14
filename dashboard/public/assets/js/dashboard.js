@@ -8,6 +8,9 @@ let state = {
   staffRoles: [],
   me: null,
   admins: [],
+  statusBot: {},
+  statusBotGuilds: [],
+  statusBotChannels: [],
 };
 
 // ── Utilitaires ───────────────────────────────────────────
@@ -810,6 +813,176 @@ async function sendMessage() {
   }
 }
 
+// ── BOT STATUS FIVEM (second bot, statut en direct) ────────
+async function loadStatusBotSettings() {
+  let data;
+  try {
+    data = await api('GET', '/api/settings/status-bot');
+  } catch {
+    // L'endpoint n'existe peut-être pas encore côté serveur : on ne casse
+    // pas le reste du dashboard pour autant.
+    return;
+  }
+  state.statusBot = data.statusBot || {};
+
+  const tokenInput = document.getElementById('input-status-token');
+  if (tokenInput) {
+    tokenInput.placeholder = data.hasToken
+      ? '•••••••• (token déjà enregistré, colle-en un nouveau pour le remplacer)'
+      : 'Colle le token du second bot ici';
+  }
+
+  const toggle = document.getElementById('toggle-status-bot');
+  if (toggle) toggle.checked = !!state.statusBot.enabled;
+
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+  setVal('input-cfx-code', state.statusBot.cfxCode);
+  setVal('select-status-mode', state.statusBot.mode || 'voice-name');
+  setVal('input-status-refresh', state.statusBot.refreshSeconds || 60);
+  setVal('input-status-format', state.statusBot.nameFormat || '🟢 {players}/{maxplayers} joueurs');
+
+  updateCfxPreview(state.statusBot.lastServerStatus);
+  toggleStatusBotOptionsVisibility();
+}
+
+function toggleStatusBotOptionsVisibility() {
+  const container = document.getElementById('status-bot-options-container');
+  const toggle = document.getElementById('toggle-status-bot');
+  if (container) container.style.opacity = toggle?.checked ? '1' : '0.55';
+
+  const badge = document.getElementById('status-bot-badge');
+  if (badge) badge.style.display = toggle?.checked ? 'inline-block' : 'none';
+}
+
+function updateCfxPreview(serverStatus) {
+  const dot = document.getElementById('cfx-status-dot');
+  const text = document.getElementById('cfx-status-text');
+  if (!dot || !text) return;
+
+  if (!serverStatus) {
+    dot.className = 'cfx-dot';
+    text.textContent = 'Aucune donnée récupérée pour le moment.';
+    return;
+  }
+
+  if (serverStatus.online) {
+    dot.className = 'cfx-dot online';
+    text.textContent = `${serverStatus.hostname} — ${serverStatus.players}/${serverStatus.maxPlayers} joueurs en ligne`;
+  } else {
+    dot.className = 'cfx-dot offline';
+    text.textContent = serverStatus.error || 'Serveur hors ligne ou injoignable.';
+  }
+}
+
+async function loadStatusBotGuilds() {
+  try {
+    state.statusBotGuilds = await api('GET', '/api/statusbot/guilds');
+  } catch {
+    state.statusBotGuilds = [];
+  }
+
+  const guildSelect = document.getElementById('select-status-guild');
+  fillSelect(guildSelect, state.statusBotGuilds, {
+    value: (g) => g.id,
+    label: (g) => g.name,
+    placeholder: state.statusBotGuilds.length ? 'Sélectionner un serveur…' : 'Bot status hors ligne ou non invité sur un serveur',
+  });
+  if (guildSelect) guildSelect.value = state.statusBot.guildId || '';
+
+  await onStatusGuildChange(false);
+}
+
+async function onStatusGuildChange(fromUser = true) {
+  const guildSelect = document.getElementById('select-status-guild');
+  const channelSelect = document.getElementById('select-status-channel');
+  if (!guildSelect || !channelSelect) return;
+
+  const guildId = guildSelect.value;
+  if (!guildId) {
+    return fillSelect(channelSelect, [], { value: () => '', label: () => '', placeholder: "Choisis un serveur d'abord" });
+  }
+
+  try {
+    state.statusBotChannels = await api('GET', `/api/statusbot/guilds/${guildId}/channels`);
+  } catch {
+    state.statusBotChannels = [];
+  }
+
+  fillSelect(channelSelect, state.statusBotChannels, {
+    value: (c) => c.id,
+    label: (c) => (c.type === 'voice' ? `🔊 ${c.name}` : `#${c.name}`),
+    placeholder: 'Sélectionner un salon…',
+  });
+  if (!fromUser) channelSelect.value = state.statusBot.statusChannelId || '';
+  else channelSelect.value = '';
+}
+
+document.getElementById('select-status-guild')?.addEventListener('change', () => onStatusGuildChange(true));
+document.getElementById('toggle-status-bot')?.addEventListener('change', toggleStatusBotOptionsVisibility);
+
+document.getElementById('test-cfx-btn')?.addEventListener('click', async () => {
+  const code = document.getElementById('input-cfx-code')?.value.trim();
+  if (!code) return toast('Renseigne un code CFX avant de tester.', true);
+
+  const text = document.getElementById('cfx-status-text');
+  const dot = document.getElementById('cfx-status-dot');
+  if (text) text.textContent = 'Vérification en cours…';
+  if (dot) dot.className = 'cfx-dot';
+
+  try {
+    const result = await api('POST', '/api/cfx/test', { code });
+    updateCfxPreview({ online: true, ...result });
+  } catch (err) {
+    updateCfxPreview({ online: false, error: err.message });
+  }
+});
+
+document.getElementById('save-status-token-btn')?.addEventListener('click', async () => {
+  const token = document.getElementById('input-status-token').value.trim();
+  if (!token) return toast('Colle le token du second bot avant de sauvegarder.', true);
+  try {
+    await api('POST', '/api/settings/status-bot', { token });
+    toast('Token du bot status enregistré, connexion en cours…');
+    document.getElementById('input-status-token').value = '';
+    setTimeout(async () => {
+      await loadStatusBotSettings();
+      await loadStatusBotGuilds();
+    }, 2500);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+document.getElementById('save-status-bot-btn')?.addEventListener('click', async () => {
+  const patch = {
+    enabled: !!document.getElementById('toggle-status-bot')?.checked,
+    cfxCode: document.getElementById('input-cfx-code')?.value.trim() || '',
+    mode: document.getElementById('select-status-mode')?.value || 'voice-name',
+    refreshSeconds: Math.max(30, parseInt(document.getElementById('input-status-refresh')?.value, 10) || 60),
+    guildId: document.getElementById('select-status-guild')?.value || '',
+    statusChannelId: document.getElementById('select-status-channel')?.value || '',
+    nameFormat: document.getElementById('input-status-format')?.value || '',
+  };
+
+  if (patch.enabled && !patch.cfxCode) {
+    return toast("Renseigne un code CFX avant d'activer le bot de statut.", true);
+  }
+  if (patch.enabled && !patch.statusChannelId) {
+    return toast('Choisis un salon avant d\'activer le bot de statut.', true);
+  }
+
+  try {
+    const res = await api('POST', '/api/settings/status-bot', patch);
+    state.statusBot = { ...state.statusBot, ...res.statusBot };
+    toast('Configuration du bot status enregistrée.');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 // ── STUDIO, THÈMES & FOND D'ÉCRAN ─────────────────────────
 function applyThemeConfig(config) {
   const previewBox = document.getElementById('wallpaper-preview');
@@ -850,9 +1023,31 @@ function applyThemeConfig(config) {
   }
 }
 
+// ── Accordéon "Configuration générale" (style liste Discord) ──────────
+function initGeneralAccordion() {
+  const accordions = [...document.querySelectorAll('#view-general .settings-accordion')];
+  if (!accordions.length) return;
+
+  accordions.forEach((acc) => {
+    acc.addEventListener('toggle', () => {
+      if (!acc.open) return;
+      // Un seul panneau ouvert à la fois, comme une liste de réglages Discord.
+      accordions.forEach((other) => {
+        if (other !== acc) other.open = false;
+      });
+    });
+  });
+}
+
+document.getElementById('toggle-status-bot')?.addEventListener('change', (e) => {
+  const badge = document.getElementById('status-bot-badge');
+  if (badge) badge.style.display = e.target.checked ? 'inline-block' : 'none';
+});
+
 // ── INITIALISATION COMPLÈTE AU DOM ────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initNavigation();
+  initGeneralAccordion();
 
   // Live Console Events
   const ticketSelect = document.getElementById('select-active-ticket');
@@ -951,5 +1146,14 @@ document.addEventListener('DOMContentLoaded', () => {
   await refreshStatus();
   await loadSettings();
   await loadGuilds();
+
+  // Bot status FiveM : ne doit jamais faire planter le reste du dashboard
+  // si l'endpoint n'existe pas encore côté serveur ou si le bot n'est pas
+  // encore configuré/connecté.
+  try {
+    await loadStatusBotSettings();
+    await loadStatusBotGuilds();
+  } catch {}
+
   setInterval(refreshStatus, 5000);
 })();
