@@ -6,6 +6,7 @@ const cors = require('cors');
 const { ensureSchema, pool } = require('./lib/db');
 const { globalStore, tenantManager } = require('./lib/store');
 const botManager = require('./lib/botManager');
+const statusBotManager = require('./lib/statusBot');
 
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const HOST = process.env.DASHBOARD_HOST || '0.0.0.0';
@@ -38,6 +39,26 @@ async function startAllTenantBots() {
   console.log(`🤖 ${started} bot(s) client démarré(s) sur ${rows.length} tenant(s) au total.`);
 }
 
+// Démarre le bot status FiveM de chaque tenant qui a un token configuré
+// (application Discord distincte du bot principal, cf. lib/statusBot.js).
+async function startAllStatusBots() {
+  const [rows] = await pool.query('SELECT id FROM tenants');
+  let started = 0;
+  for (const row of rows) {
+    try {
+      const store = await tenantManager.getStore(row.id);
+      if (store.getStatusBot().token) {
+        const controller = statusBotManager.get(row.id, store);
+        await controller.start();
+        started += 1;
+      }
+    } catch (err) {
+      console.error(`❌ Échec démarrage bot status du tenant ${row.id}:`, err.message);
+    }
+  }
+  console.log(`📡 ${started} bot(s) status démarré(s) sur ${rows.length} tenant(s) au total.`);
+}
+
 async function main() {
   console.log('🔌 Connexion à MySQL et vérification du schéma…');
   await ensureSchema();
@@ -59,6 +80,7 @@ async function main() {
   });
 
   await startAllTenantBots();
+  await startAllStatusBots();
 
   // ── Watchdog : relance le bot de chaque tenant tombé en erreur ────
   let watchdogBackoffMs = 15_000;
@@ -78,6 +100,19 @@ async function main() {
           }
         }
       }
+      for (const controller of statusBotManager.allControllers()) {
+        const sStatus = controller.getStatus().status;
+        const hasToken = !!controller.store.getStatusBot().token;
+        if (hasToken && (sStatus === 'offline' || sStatus === 'error')) {
+          console.log(`🔄 Watchdog [tenant ${controller.tenantId}] : bot status ${sStatus}, tentative de reconnexion…`);
+          anyRetried = true;
+          try {
+            await controller.start();
+          } catch (err) {
+            console.error(`Watchdog [tenant ${controller.tenantId}]: échec de reconnexion (bot status):`, err.message);
+          }
+        }
+      }
       watchdogBackoffMs = anyRetried ? Math.min(watchdogBackoffMs * 2, 5 * 60_000) : 15_000;
       scheduleWatchdog();
     }, watchdogBackoffMs);
@@ -88,6 +123,7 @@ async function main() {
     console.log(`\n👋 Signal ${signal} reçu, arrêt en cours…`);
     server.close();
     await botManager.stopAll();
+    await statusBotManager.stopAll();
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
