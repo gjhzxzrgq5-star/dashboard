@@ -138,6 +138,25 @@
     font-size: 13px;
     color: #ccc;
   }
+  .cfx-preview-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #333);
+    background: rgba(0, 0, 0, 0.2);
+    font-size: 13px;
+  }
+  .cfx-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #555;
+    flex-shrink: 0;
+  }
+  .cfx-dot.online { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
+  .cfx-dot.offline { background: #ff4d4d; box-shadow: 0 0 6px #ff4d4d; }
 </style>
 </head>
 <body>
@@ -463,16 +482,28 @@
     <section class="view" id="view-connection">
       <div class="page-header">
         <h1>Connexion bot</h1>
-        <p>Le token du bot Discord (Developer Portal → Bot → Reset Token).</p>
+        <p>Les tokens des bots Discord (Developer Portal → Bot → Reset Token).</p>
       </div>
 
       <div class="panel">
+        <h3 class="panel-title">Bot principal (tickets & modmail)</h3>
         <div class="field">
-          <label for="input-token">Token du bot</label>
+          <label for="input-token">Token du bot principal</label>
           <input type="password" id="input-token" class="mono" placeholder="Colle ton token ici">
           <p class="field-hint">Le token affiché est masqué pour ta sécurité. Colle un nouveau token pour le remplacer.</p>
         </div>
         <button class="btn-primary" id="save-token-btn">Enregistrer et connecter</button>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Bot Status FiveM (secondaire)</h3>
+        <p class="panel-sub">Un second bot Discord dédié, uniquement utilisé pour afficher le statut en direct de ton serveur FiveM (joueurs en ligne, nom du salon vocal, embed). Doit être une application Discord distincte du bot principal ci-dessus.</p>
+        <div class="field">
+          <label for="input-status-token">Token du bot status</label>
+          <input type="password" id="input-status-token" class="mono" placeholder="Colle le token du second bot ici">
+          <p class="field-hint">Developer Portal → New Application → Bot → Reset Token. Pense à inviter ce bot sur ton serveur Discord staff avec les permissions "Gérer les salons" si tu utilises le mode "nom de salon vocal".</p>
+        </div>
+        <button class="btn-primary" id="save-status-token-btn">Enregistrer et connecter le bot status</button>
       </div>
     </section>
 
@@ -553,6 +584,74 @@
           </fieldset>
 
           <button class="btn-primary" id="save-fivem-btn" style="margin-top: 15px;">Enregistrer la config FiveM</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Bot Status FiveM (statut en direct)</h3>
+        <p class="panel-sub">Affiche en direct le statut de ton serveur FiveM (en ligne/hors ligne, joueurs connectés) à partir du code CFX de connexion. Nécessite le token du bot secondaire renseigné dans "Connexion bot".</p>
+
+        <div class="field-row" style="align-items:center; margin-bottom: 20px;">
+          <label for="toggle-status-bot" style="margin:0; font-weight: bold;">Activer le bot de statut FiveM</label>
+          <input type="checkbox" id="toggle-status-bot" style="width:auto;">
+        </div>
+
+        <div id="status-bot-options-container">
+          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📡 Serveur CFX suivi</legend>
+
+            <div class="field">
+              <label for="input-cfx-code">Code CFX du serveur</label>
+              <input type="text" id="input-cfx-code" class="mono" placeholder="ex : abcd12 (derniers chiffres/code après cfx.re/join/)">
+              <p class="field-hint">Récupérable dans l'URL de connexion : cfx.re/join/<b>abcd12</b>. Tu peux aussi coller l'URL complète, le code sera extrait automatiquement.</p>
+            </div>
+
+            <div id="cfx-status-preview" class="cfx-preview-box">
+              <span class="cfx-dot" id="cfx-status-dot"></span>
+              <span id="cfx-status-text">Aucune donnée récupérée pour le moment.</span>
+            </div>
+
+            <button class="btn-ghost" id="test-cfx-btn" style="margin-top:12px;">Tester la connexion CFX</button>
+          </fieldset>
+
+          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📍 Affichage</legend>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="select-status-mode">Mode d'affichage</label>
+                <select id="select-status-mode">
+                  <option value="voice-name">Nom de salon vocal (ex : "🟢 12/48 joueurs")</option>
+                  <option value="embed">Embed dans un salon textuel</option>
+                  <option value="both">Les deux</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="input-status-refresh">Intervalle de rafraîchissement (secondes)</label>
+                <input type="number" id="input-status-refresh" min="30" step="10" placeholder="60">
+                <p class="field-hint">Minimum 30s pour éviter le rate-limit Discord sur les renommages de salon.</p>
+              </div>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="select-status-guild">Serveur Discord</label>
+                <select id="select-status-guild"></select>
+              </div>
+              <div class="field">
+                <label for="select-status-channel">Salon (vocal ou textuel selon le mode)</label>
+                <select id="select-status-channel"></select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="input-status-format">Format du nom de salon vocal</label>
+              <input type="text" id="input-status-format" class="mono" placeholder="🟢 {players}/{maxplayers} joueurs">
+              <p class="field-hint">Variables disponibles : <code>{players}</code>, <code>{maxplayers}</code>, <code>{hostname}</code>, <code>{status}</code>.</p>
+            </div>
+          </fieldset>
+
+          <button class="btn-primary" id="save-status-bot-btn" style="margin-top: 15px;">Enregistrer la config du bot status</button>
         </div>
       </div>
 
@@ -676,8 +775,18 @@
 
       <div class="panel">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h3 class="panel-title">Version 2.6.0</h3>
+          <h3 class="panel-title">Version 2.7.0</h3>
           <span class="field-hint">Dernière mise à jour</span>
+        </div>
+        <ul class="changelog-list">
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Bot Status FiveM : affiche en direct le nombre de joueurs et l'état du serveur (via code CFX) dans un salon vocal et/ou un embed, avec un second bot Discord dédié.</li>
+          <li><span class="changelog-tag tag-feat">Nouveau</span> "Connexion bot" gère maintenant deux tokens distincts : bot principal (tickets/modmail) et bot status (secondaire).</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 class="panel-title">Version 2.6.0</h3>
         </div>
         <ul class="changelog-list">
           <li><span class="changelog-tag tag-feat">Nouveau</span> Moyens de paiement Revolut & PayPal dans "Gestion & Abonnement", avec renouvellement automatique activable par moyen de paiement.</li>
