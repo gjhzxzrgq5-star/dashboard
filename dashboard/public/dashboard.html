@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard — MP MOI</title>
-<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 <link rel="stylesheet" href="/assets/css/style.css">
 <style>
   .icon-svg {
@@ -50,9 +49,9 @@
     text-transform: uppercase;
     margin-right: 8px;
   }
-  .tag-feat { background: rgba(0, 223, 216, 0.2); color: #00dfd8; border: 1px solid #00dfd8; }
-  .tag-fix { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
-  .tag-imp { background: rgba(255, 184, 0, 0.2); color: #ffb800; border: 1px solid #ffb800; }
+  .tag-feat { background: rgba(51, 191, 174, 0.15); color: var(--amber); border: 1px solid rgba(51, 191, 174, 0.4); }
+  .tag-fix { background: rgba(239, 79, 91, 0.15); color: var(--coral); border: 1px solid rgba(239, 79, 91, 0.4); }
+  .tag-imp { background: rgba(242, 165, 61, 0.15); color: var(--cyan); border: 1px solid rgba(242, 165, 61, 0.4); }
   .changelog-list {
     list-style: none;
     padding: 0;
@@ -84,9 +83,9 @@
     padding: 3px 8px;
     border-radius: 12px;
     font-size: 12px;
-    background: rgba(46, 204, 113, 0.2);
-    color: #2ecc71;
-    border: 1px solid #2ecc71;
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(52, 211, 153, 0.4);
   }
   .sub-status-badge {
     display: inline-block;
@@ -95,27 +94,8 @@
     font-size: 12px;
     font-weight: bold;
   }
-  .sub-active { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71; }
-  .sub-inactive { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
-  .role-chip {
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: bold;
-    background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-  }
-  .admin-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .admin-row:last-child { border-bottom: none; }
-  .admin-row .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .admin-row select { width: auto; }
+  .sub-active { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.4); }
+  .sub-inactive { background: rgba(239, 79, 91, 0.15); color: var(--coral); border: 1px solid rgba(239, 79, 91, 0.4); }
   .payment-method-card {
     border: 1px solid var(--border-color, #333);
     border-radius: 8px;
@@ -175,8 +155,8 @@
     background: #555;
     flex-shrink: 0;
   }
-  .cfx-dot.online { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
-  .cfx-dot.offline { background: #ff4d4d; box-shadow: 0 0 6px #ff4d4d; }
+  .cfx-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(52, 211, 153, 0.6); }
+  .cfx-dot.offline { background: var(--coral); box-shadow: 0 0 6px rgba(239, 79, 91, 0.6); }
 
   /* ── Accordéon "liste Discord" pour Configuration générale ── */
   .settings-accordion {
@@ -253,9 +233,9 @@
     text-transform: uppercase;
     padding: 2px 8px;
     border-radius: 10px;
-    background: rgba(46, 204, 113, 0.15);
-    color: #2ecc71;
-    border: 1px solid rgba(46, 204, 113, 0.4);
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(52, 211, 153, 0.4);
     margin-left: 8px;
     flex-shrink: 0;
   }
@@ -325,7 +305,7 @@
         <img id="user-avatar" class="user-avatar" alt="">
         <div class="user-meta">
           <div class="user-name" id="user-name">…</div>
-          <div class="user-sub" id="user-role-label">Administrateur</div>
+          <div class="user-sub">Administrateur</div>
         </div>
       </div>
       <div class="status-pill" id="status-pill">
@@ -886,25 +866,12 @@
             <label for="input-new-admin">ID Discord</label>
             <input type="text" id="input-new-admin" class="mono" placeholder="123456789012345678">
           </div>
-          <div class="field" style="margin-bottom:0;">
-            <label for="input-new-admin-role">Rôle</label>
-            <select id="input-new-admin-role">
-              <option value="administrateur">Administrateur</option>
-              <option value="moderateur">Modérateur</option>
-              <option value="visiteur">Visiteur</option>
-            </select>
-          </div>
           <button class="btn-primary" id="add-admin-btn" style="height:42px;">Ajouter</button>
         </div>
       </div>
 
       <div class="panel">
         <h3 class="panel-title">Administrateurs actuels</h3>
-        <p class="panel-sub">
-          <b>Administrateur</b> : accès complet. ·
-          <b>Modérateur</b> : tickets, live chat, stats, bannis FiveM. ·
-          <b>Visiteur</b> : lecture seule (aperçu, stats, tickets, bannis FiveM).
-        </p>
         <div id="admins-list"></div>
       </div>
     </section>
