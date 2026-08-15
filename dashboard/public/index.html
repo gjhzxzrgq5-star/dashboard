@@ -47,7 +47,7 @@
     transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
   }
   .plan-card:hover { transform: translateY(-3px); }
-  .plan-card.featured { border-color: rgba(196, 72, 221, 0.5); box-shadow: 0 0 30px var(--glow-cyan); }
+  .plan-card.featured { border-color: rgba(242, 165, 61, 0.5); box-shadow: 0 0 30px var(--glow-cyan); }
   .plan-badge {
     position: absolute; top: -13px; right: 28px;
     background: linear-gradient(135deg, var(--cyan), var(--amber));
@@ -130,7 +130,7 @@
       <div class="plan-name">Standard</div>
       <p class="plan-desc">L'essentiel pour gérer les tickets de ton serveur.</p>
       <div class="plan-price">
-        <span class="amount">2,50&nbsp;€</span>
+        <span class="amount">4,99&nbsp;€</span>
         <span class="cycle">/ mois</span>
       </div>
       <ul class="plan-features">
@@ -150,7 +150,7 @@
       <div class="plan-name">Premium</div>
       <p class="plan-desc">Toutes les fonctionnalités, pour les serveurs qui veulent aller plus loin.</p>
       <div class="plan-price">
-        <span class="amount">5,50&nbsp;€</span>
+        <span class="amount">9,99&nbsp;€</span>
         <span class="cycle">/ mois</span>
       </div>
       <ul class="plan-features">
@@ -175,7 +175,7 @@
     <h2>Choisis ton moyen de paiement</h2>
     <div class="pay-summary">
       <span class="plan" id="pay-summary-plan">Offre Standard</span>
-      <span class="price" id="pay-summary-price">2,50 € / mois</span>
+      <span class="price" id="pay-summary-price">4,99 € / mois</span>
     </div>
 
     <a href="#" id="pay-link-revolut" target="_blank" rel="noopener" class="pay-option">
@@ -212,13 +212,13 @@
   const PLANS = {
     standard: {
       label: 'Offre Standard',
-      price: '2,50 € / mois',
+      price: '4,99 € / mois',
       revolutLink: 'https://revolut.me/tonpseudo?amount=4.99',
       paypalLink: 'https://paypal.me/tonpseudo/4.99',
     },
     premium: {
       label: 'Offre Premium',
-      price: '5,50 € / mois',
+      price: '9,99 € / mois',
       revolutLink: 'https://revolut.me/tonpseudo?amount=9.99',
       paypalLink: 'https://paypal.me/tonpseudo/9.99',
     },
