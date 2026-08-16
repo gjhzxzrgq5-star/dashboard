@@ -101,6 +101,25 @@
   .pay-summary .plan { font-weight: 600; }
   .pay-summary .price { font-family: var(--font-display); color: var(--cyan); font-weight: 700; }
 
+  .pay-option.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .pay-unavailable-badge {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+    color: #ff8a8a; background: rgba(255, 90, 90, 0.12);
+    border: 1px solid rgba(255, 90, 90, 0.35);
+    border-radius: 20px; padding: 3px 10px; flex-shrink: 0;
+  }
+  .pay-notice {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: rgba(255, 176, 32, 0.1);
+    border: 1px solid rgba(255, 176, 32, 0.35);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 16px;
+    font-size: 13px; line-height: 1.5; color: var(--text);
+  }
+
   @media (max-width: 720px) {
     .pricing-grid { grid-template-columns: 1fr; }
     .hero h1 { font-size: 30px; }
@@ -130,7 +149,7 @@
       <div class="plan-name">Standard</div>
       <p class="plan-desc">L'essentiel pour gérer les tickets de ton serveur.</p>
       <div class="plan-price">
-        <span class="amount">4,99&nbsp;€</span>
+        <span class="amount">2,50&nbsp;€</span>
         <span class="cycle">/ mois</span>
       </div>
       <ul class="plan-features">
@@ -150,7 +169,7 @@
       <div class="plan-name">Premium</div>
       <p class="plan-desc">Toutes les fonctionnalités, pour les serveurs qui veulent aller plus loin.</p>
       <div class="plan-price">
-        <span class="amount">9,99&nbsp;€</span>
+        <span class="amount">5,50&nbsp;€</span>
         <span class="cycle">/ mois</span>
       </div>
       <ul class="plan-features">
@@ -178,13 +197,18 @@
       <span class="price" id="pay-summary-price">4,99 € / mois</span>
     </div>
 
-    <a href="#" id="pay-link-revolut" target="_blank" rel="noopener" class="pay-option">
+    <div class="pay-notice">
+      ⚠️ Paiement par Revolut actuellement indisponible. Merci de régler via PayPal en attendant.
+    </div>
+
+    <span id="pay-link-revolut" class="pay-option disabled" aria-disabled="true">
       <span class="payment-logo revolut">R</span>
       <span class="pay-text">
         <div class="pay-title">Payer avec Revolut</div>
-        <div class="pay-sub">Paiement instantané via Revolut.me</div>
+        <div class="pay-sub">Temporairement indisponible</div>
       </span>
-    </a>
+      <span class="pay-unavailable-badge">Indisponible</span>
+    </span>
 
     <a href="#" id="pay-link-paypal" target="_blank" rel="noopener" class="pay-option">
       <span class="payment-logo paypal">P</span>
@@ -207,20 +231,19 @@
 
 <script>
   // ── Configuration des offres & liens de paiement ──────────────
-  // ⚠️ Remplace les liens ci-dessous par tes vrais liens Revolut.me / PayPal.me
-  // (les mêmes que ceux configurés dans Dashboard → Gestion & Abonnement → Moyens de paiement).
+  // ⚠️ Remplace les liens ci-dessous par ton vrai lien PayPal.me
+  // (le même que celui configuré dans Dashboard → Gestion & Abonnement → Moyens de paiement).
+  // Le paiement Revolut est désactivé côté client tant qu'il est indisponible (cf. pay-notice).
   const PLANS = {
     standard: {
       label: 'Offre Standard',
-      price: '4,99 € / mois',
-      revolutLink: 'https://revolut.me/tonpseudo?amount=4.99',
-      paypalLink: 'https://paypal.me/tonpseudo/4.99',
+      price: '2,50 € / mois',
+      paypalLink: 'https://paypal.me/tonpseudo/2.50',
     },
     premium: {
       label: 'Offre Premium',
-      price: '9,99 € / mois',
-      revolutLink: 'https://revolut.me/tonpseudo?amount=9.99',
-      paypalLink: 'https://paypal.me/tonpseudo/9.99',
+      price: '5,50 € / mois',
+      paypalLink: 'https://paypal.me/tonpseudo/5.50',
     },
   };
 
@@ -231,7 +254,6 @@
     if (!plan) return;
     document.getElementById('pay-summary-plan').textContent = plan.label;
     document.getElementById('pay-summary-price').textContent = plan.price;
-    document.getElementById('pay-link-revolut').href = plan.revolutLink;
     document.getElementById('pay-link-paypal').href = plan.paypalLink;
     backdrop.classList.add('show');
   }
