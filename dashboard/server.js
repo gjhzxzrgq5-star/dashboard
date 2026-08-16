@@ -224,17 +224,22 @@ function createDashboardServer() {
     res.type('html').send(readView('login.html'));
   });
 
-  app.get('/api/auth/discord', requireAuthAppSet, (req, res) => {
+ app.get('/api/auth/discord', requireAuthAppSet, (req, res) => {
+    // Réinitialise la session pour éviter les conflits d'état
+    req.session.oauthState = null;
+
     const { clientId, redirectUri } = globalStore.getAuthConfig();
     const state = crypto.randomBytes(16).toString('hex');
     req.session.oauthState = state;
+
     const url = new URL('https://discord.com/oauth2/authorize');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'identify');
     url.searchParams.set('state', state);
-    url.searchParams.set('prompt', 'consent');
+    url.searchParams.set('prompt', 'consent'); // Force l'écran d'autorisation Discord
+
     res.redirect(url.toString());
   });
 
