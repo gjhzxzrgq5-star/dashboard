@@ -7,6 +7,7 @@ const { ensureSchema, pool } = require('./lib/db');
 const { globalStore, tenantManager } = require('./lib/store');
 const botManager = require('./lib/botManager');
 const statusBotManager = require('./lib/statusBot');
+const { startKeepAlive } = require('./lib/keepAlive');
 
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const HOST = process.env.DASHBOARD_HOST || '0.0.0.0';
@@ -78,6 +79,8 @@ async function main() {
       console.log('👉 Ouvre le dashboard pour configurer la connexion via Discord (/setup).');
     }
   });
+
+  startKeepAlive();
 
   await startAllTenantBots();
   await startAllStatusBots();
