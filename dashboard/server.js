@@ -23,20 +23,13 @@ function readView(name) {
 }
 
 // ── Auth : vérifie juste qu'on a une session Discord + un tenantId ──
-// La vérification "est-il admin de CE tenant" est refaite dans
-// resolveTenant ci-dessous, une fois le TenantStore chargé, pour ne
-// jamais faire confiance à une valeur mise en cache dans la session.
 function requireAuth(req, res, next) {
   if (req.session && req.session.discordUser && req.session.tenantId) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
   return res.redirect('/login');
 }
 
-// ── Résout le TenantStore + le BotController DU TENANT DE LA SESSION,
-// et re-vérifie l'appartenance admin à CE tenant précis à chaque requête.
-// C'est le garde-fou central qui remplace l'ancien `store.isAdmin()`
-// global : même si deux tenants existent, cette fonction ne peut
-// physiquement renvoyer que les données de req.session.tenantId.
+// ── Résout le TenantStore + le BotController DU TENANT DE LA SESSION ──
 async function resolveTenant(req, res, next) {
   try {
     const tenantId = req.session.tenantId;
@@ -44,9 +37,6 @@ async function resolveTenant(req, res, next) {
 
     const store = await tenantManager.getStore(tenantId);
     if (!store.isAdmin(req.session.discordUser.id)) {
-      // La session prétend appartenir à ce tenant mais n'y est plus admin
-      // (retiré entre-temps, etc.) → on coupe court plutôt que de servir
-      // les données d'un tenant auquel l'utilisateur n'a plus accès.
       req.session.destroy(() => {});
       return res.status(401).json({ error: 'unauthorized' });
     }
@@ -63,8 +53,7 @@ async function resolveTenant(req, res, next) {
   }
 }
 
-// ── Contrôle d'accès par rôle : à placer APRÈS resolveTenant (a besoin
-// de req.adminRole). Un rôle non listé dans `allowed` reçoit un 403.
+// ── Contrôle d'accès par rôle ──
 function requireRole(...allowed) {
   return (req, res, next) => {
     if (allowed.includes(req.adminRole)) return next();
@@ -211,9 +200,6 @@ function createDashboardServer() {
     return res.redirect('/accueil');
   });
 
-  // ── Setup : configure l'app OAuth Discord UNIQUE utilisée pour le
-  // bouton "Se connecter" (PAS le bot d'un client — ça, c'est configuré
-  // individuellement par chaque tenant depuis son propre dashboard).
   app.get('/setup', requireNoAuthAppYet, (req, res) => {
     res.type('html').send(readView('setup.html'));
   });
@@ -262,18 +248,29 @@ function createDashboardServer() {
     const { clientId, clientSecret, redirectUri } = globalStore.getAuthConfig();
 
     try {
+      // Authentification Basic Auth + URLSearchParams encodé en chaîne de caractères
+      const credentials = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: redirectUri.trim(),
+      });
+
       const tokenRes = await fetch(`${DISCORD_API}/oauth2/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: redirectUri,
-        }),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${credentials}`,
+        },
+        body: body.toString(),
       });
-      if (!tokenRes.ok) throw new Error(`Échange du code refusé par Discord (${tokenRes.status})`);
+
+      if (!tokenRes.ok) {
+        const errorData = await tokenRes.json().catch(() => ({}));
+        console.error('Erreur détaillée échange token Discord :', errorData);
+        throw new Error(`Échange du code refusé par Discord (${tokenRes.status})`);
+      }
+
       const tokenData = await tokenRes.json();
 
       const userRes = await fetch(`${DISCORD_API}/users/@me`, {
@@ -291,12 +288,6 @@ function createDashboardServer() {
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
 
-      // ── C'est ICI que se joue tout le fix ────────────────────────
-      // On cherche à QUEL TENANT appartient ce discord_id (table
-      // tenant_admins), et jamais à une liste globale unique. Si ce
-      // discord_id n'appartient à aucun tenant, ce n'est PAS le CEO
-      // qu'on lui montre : on l'envoie sur /activate créer SON PROPRE
-      // tenant, vierge, via un code client.
       const tenantId = await tenantManager.findTenantIdForDiscordUser(user.id);
 
       if (!tenantId) {
@@ -334,9 +325,7 @@ function createDashboardServer() {
     }
   });
 
-  // ── Activation du code client (après paiement) ──────────
-  // Un code valide crée désormais un TENANT NEUF (dashboard vierge),
-  // au lieu d'ajouter l'utilisateur à la liste d'admins globale du CEO.
+  // ── Activation du code client ──────────
   app.get('/activate', requireAuthAppSet, (req, res) => {
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     if (!req.session.pendingUser) return res.redirect('/login');
@@ -366,9 +355,6 @@ function createDashboardServer() {
         return res.status(400).json({ error: messages[result.reason] || 'Code invalide.' });
       }
 
-      // Code valide → on crée un TENANT NEUF et isolé pour ce client,
-      // avec des settings par défaut (data/settings.default.json), et
-      // CE client devient admin de CE tenant uniquement.
       const tenantId = await tenantManager.createTenantForDiscordUser(pending.id, pending.username);
       const store = await tenantManager.getStore(tenantId);
 
@@ -430,15 +416,11 @@ function createDashboardServer() {
     req.session.destroy(() => res.json({ ok: true }));
   });
 
-  // ── Dashboard (protégé, scopé au tenant de la session) ──────────
+  // ── Dashboard ──────────
   app.get('/dashboard', requireAuthAppSet, requireAuth, (req, res) => {
     res.type('html').send(readView('dashboard.html'));
   });
 
-  // ── API protégée : requireAuth (session valide) PUIS resolveTenant
-  // (charge le TenantStore + BotController du tenant de CETTE session,
-  // et re-vérifie l'admin sur CE tenant). Toute route ci-dessous utilise
-  // req.tenantStore / req.bot / req.tenantId — jamais un store global.
   const api = express.Router();
   api.use(requireAuth, resolveTenant);
 
@@ -450,7 +432,6 @@ function createDashboardServer() {
     });
   });
 
-  // ── FiveM (déjà correctement scopé par dbUserId, inchangé) ───────
   api.get('/fivem/config', async (req, res) => {
     try {
       const dbUserId = req.session.discordUser.dbId;
@@ -498,8 +479,6 @@ function createDashboardServer() {
     }
   });
 
-  // ── Statut / settings / ticket types : tout passe par req.tenantStore
-  // et req.bot (résolus pour CE tenant uniquement par resolveTenant) ──
   api.get('/status', (req, res) => {
     res.json(req.bot.getStatus());
   });
@@ -523,8 +502,6 @@ function createDashboardServer() {
     if (!isTokenChange) {
       panel = await req.bot.refreshPanel();
     } else if (patch.token) {
-      // Premier token renseigné (ou changé) : on démarre/relance CE bot,
-      // et lui seul — pas celui d'un autre tenant.
       await req.bot.restart();
     }
 
@@ -535,7 +512,6 @@ function createDashboardServer() {
     });
   });
 
-  // ── Bot status FiveM (second bot, distinct du bot principal) ───────
   api.get('/settings/status-bot', requireRole('administrateur'), (req, res) => {
     const s = req.tenantStore.getStatusBot();
     const live = req.statusBot.getStatus();
@@ -558,7 +534,6 @@ function createDashboardServer() {
     const updated = req.tenantStore.setStatusBot(patch);
 
     if (isTokenChange) {
-      // Nouveau token (ou changement) : on (re)connecte CE bot status.
       await req.statusBot.restart();
     }
 
@@ -747,9 +722,6 @@ function createDashboardServer() {
     res.send(csv);
   });
 
-  // Gestion des accès admin : réservée au rôle "administrateur" (un
-  // modérateur ou visiteur ne doit pas pouvoir voir/modifier qui a
-  // accès au dashboard, ni changer les rôles).
   api.get('/admins', requireRole('administrateur'), (req, res) => {
     res.json({ admins: req.tenantStore.getAdminsWithRoles(), selfId: req.session.discordUser.id });
   });
@@ -761,9 +733,6 @@ function createDashboardServer() {
     let role = String(req.body?.role || 'administrateur').trim();
     if (!TenantStore.ROLES.includes(role)) role = 'administrateur';
 
-    // Un discord_id ne peut appartenir qu'à un seul tenant : on refuse
-    // d'ajouter comme admin quelqu'un qui gère déjà un autre dashboard,
-    // plutôt que de le faire basculer silencieusement vers celui-ci.
     const existingTenant = await tenantManager.findTenantIdForDiscordUser(id);
     if (existingTenant && existingTenant !== req.tenantId) {
       return res.status(400).json({ error: 'Cet identifiant Discord est déjà administrateur sur un autre dashboard.' });
@@ -814,8 +783,8 @@ function authErrorPage(message) {
 <body><div class="auth-page"><div class="auth-card">
 <div class="auth-logo">🎫</div>
 <h1>Connexion refusée</h1>
-<div class="auth-error show">${message.replace(/</g, '&lt;')}</div>
-<a class="btn-primary" style="display:block;text-align:center;text-decoration:none;" href="/login">Retour à la connexion</a>
+<div class="auth-error">${message}</div>
+<a href="/login" class="btn btn-primary btn-block">Retour à la connexion</a>
 </div></div></body></html>`;
 }
 
