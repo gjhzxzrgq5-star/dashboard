@@ -67,6 +67,12 @@ async function main() {
   console.log('⚙️  Chargement des settings globaux…');
   await globalStore.init();
 
+  // Migration : rattache les tenants créés avant le système "1 appli
+  // Discord par client" à l'ancienne appli globale (cf. lib/store.js).
+  if (globalStore.hasAuthApp()) {
+    await tenantManager.migrateLegacyTenantsWithoutApp(globalStore.getAuthConfig());
+  }
+
   const createDashboardServer = require('./dashboard/server');
 
   const app = createDashboardServer();
@@ -75,9 +81,7 @@ async function main() {
 
   const server = app.listen(PORT, HOST, () => {
     console.log(`🖥️  Dashboard disponible sur http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-    if (!globalStore.hasAuthApp()) {
-      console.log('👉 Ouvre le dashboard pour configurer la connexion via Discord (/setup).');
-    }
+    console.log('👉 Chaque client crée son propre espace (sa propre appli Discord) via /setup.');
   });
 
   startKeepAlive();
