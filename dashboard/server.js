@@ -184,6 +184,46 @@ function createDashboardServer() {
     res.type('html').send(readView('index.html'));
   });
 
+  const DISCORD_BTN_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.369A19.79 19.79 0 0 0 16.558 3c-.211.375-.457.881-.626 1.283a18.27 18.27 0 0 0-5.865 0C9.898 3.881 9.646 3.375 9.434 3a19.736 19.736 0 0 0-3.762 1.37C2.913 7.99 2.157 11.53 2.42 15.02a19.9 19.9 0 0 0 6.031 3.049c.486-.657.918-1.354 1.29-2.087a12.9 12.9 0 0 1-2.032-.98c.171-.124.338-.253.5-.386a14.16 14.16 0 0 0 12.062 0c.164.133.331.262.5.386-.646.383-1.325.71-2.033.98.372.734.804 1.43 1.29 2.087a19.86 19.86 0 0 0 6.033-3.05c.309-4.06-.548-7.567-2.744-11.65ZM9.5 13.14c-1.08 0-1.96-1.005-1.96-2.24s.862-2.24 1.96-2.24 1.982 1.014 1.963 2.24c0 1.235-.865 2.24-1.963 2.24Zm7.02 0c-1.08 0-1.96-1.005-1.96-2.24s.862-2.24 1.96-2.24 1.982 1.014 1.963 2.24c0 1.235-.865 2.24-1.963 2.24Z"/></svg>`;
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Rend login.html en injectant CÔTÉ SERVEUR le bon lien Discord (avec le
+  // slug déjà résolu) ou le petit formulaire pour saisir l'identifiant
+  // d'espace — plutôt que de faire deviner le slug au JS du navigateur
+  // depuis l'URL (source de bugs : cache, script bloqué, etc.).
+  function renderLogin(slug) {
+    let html = readView('login.html');
+    if (slug) {
+      html = html
+        .replace('__SUB_TEXT__', `Connecte-toi avec le compte Discord autorisé sur l'espace "${escapeHtml(slug)}".`)
+        .replace('__SLUG_FORM__', '')
+        .replace(
+          '__DISCORD_BTN__',
+          `<a href="/api/auth/discord/${encodeURIComponent(slug)}" class="btn-discord">${DISCORD_BTN_SVG}Se connecter avec Discord</a>
+           <p class="sub" style="margin-top:16px;"><a href="/login">Ce n'est pas ton espace ? Change d'identifiant</a></p>`
+        );
+    } else {
+      html = html
+        .replace('__SUB_TEXT__', 'Connecte-toi avec le compte Discord autorisé pour gérer ton bot de tickets.')
+        .replace(
+          '__SLUG_FORM__',
+          `<form id="slug-form">
+             <div class="field">
+               <label for="slug-input">Identifiant de ton espace</label>
+               <input type="text" id="slug-input" class="mono" placeholder="ex: mishima" required autocomplete="off">
+               <p class="field-hint">Reçu à la création de ton espace (page /setup). Pas encore de compte ? <a href="/accueil">Voir les offres</a>.</p>
+             </div>
+             <button type="submit" class="btn-primary" style="width:100%">Continuer</button>
+           </form>`
+        )
+        .replace('__DISCORD_BTN__', '');
+    }
+    return html;
+  }
+
   app.get('/', (req, res) => {
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     return res.redirect('/accueil');
@@ -191,6 +231,7 @@ function createDashboardServer() {
 
   // ── Création d'un nouvel espace client (sa propre appli Discord) ──
   app.get('/setup', (req, res) => {
+    res.set('Cache-Control', 'no-store');
     res.type('html').send(readView('setup.html'));
   });
 
@@ -250,17 +291,19 @@ function createDashboardServer() {
 
   // ── Login via Discord OAuth2 (une appli Discord PAR client) ───────
   app.get('/login', (req, res) => {
+    res.set('Cache-Control', 'no-store');
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
-    res.type('html').send(readView('login.html'));
+    res.type('html').send(renderLogin(null));
   });
 
   app.get('/login/:slug', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     const tenant = await tenantManager.findTenantBySlug(req.params.slug);
-    if (!tenant) {
+    if (!tenant || !tenant.client_id) {
       return res.redirect('/login?error=' + encodeURIComponent("Espace introuvable. Vérifie ton identifiant."));
     }
-    res.type('html').send(readView('login.html'));
+    res.type('html').send(renderLogin(req.params.slug));
   });
 
   app.get('/api/auth/discord/:slug', async (req, res) => {
