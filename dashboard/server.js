@@ -740,7 +740,15 @@ function createDashboardServer() {
     if (!isTokenChange) {
       panel = await req.bot.refreshPanel();
     } else if (patch.token) {
-      await req.bot.restart();
+      // Ne PAS attendre la reconnexion complète ici : login() peut prendre
+      // plusieurs secondes (voire rester bloqué en cas de souci réseau côté
+      // Discord), ce qui gelait toute la requête et donnait l'impression
+      // que le dashboard était bloqué sur "connexion en cours". On lance la
+      // reconnexion en tâche de fond et on répond tout de suite ; le front
+      // suit la progression via le polling de /api/status.
+      req.bot.restart().catch((err) => {
+        console.error(`Erreur reconnexion bot (tenant ${req.tenantId}):`, err.message);
+      });
     }
 
     res.json({
