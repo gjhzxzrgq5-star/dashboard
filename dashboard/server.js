@@ -238,7 +238,6 @@ function createDashboardServer() {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'identify');
     url.searchParams.set('state', state);
-    url.searchParams.set('prompt', 'consent'); // Force l'écran d'autorisation Discord
 
     res.redirect(url.toString());
   });
@@ -246,7 +245,7 @@ function createDashboardServer() {
   app.get('/api/auth/discord/callback', requireAuthAppSet, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state || state !== req.session.oauthState) {
-      return res.type('html').send(authErrorPage('Requête invalide ou expirée. Réessaie de te connecter.'));
+      return res.redirect('/login?error=' + encodeURIComponent('Requête invalide ou expirée, réessaie de te connecter.'));
     }
     delete req.session.oauthState;
 
@@ -326,7 +325,7 @@ function createDashboardServer() {
       res.redirect('/dashboard');
     } catch (err) {
       console.error('Erreur OAuth Discord:', err.message);
-      res.type('html').send(authErrorPage(`Connexion Discord échouée : ${err.message}`));
+      res.redirect('/login?error=' + encodeURIComponent('Connexion Discord échouée, réessaie.'));
     }
   });
 
@@ -779,18 +778,6 @@ function createDashboardServer() {
 function maskToken(token) {
   if (token.length <= 8) return '••••••••';
   return `${token.slice(0, 6)}${'•'.repeat(18)}${token.slice(-4)}`;
-}
-
-function authErrorPage(message) {
-  return `<!DOCTYPE html>
-<html lang="fr"><head><meta charset="UTF-8"><title>Connexion refusée</title>
-<link rel="stylesheet" href="/assets/css/style.css"></head>
-<body><div class="auth-page"><div class="auth-card">
-<div class="auth-logo">🎫</div>
-<h1>Connexion refusée</h1>
-<div class="auth-error">${message}</div>
-<a href="/login" class="btn btn-primary btn-block">Retour à la connexion</a>
-</div></div></body></html>`;
 }
 
 module.exports = createDashboardServer;
