@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Configuration initiale — Ticket Bot</title>
+<title>Créer ton espace — Ticket Bot</title>
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 <link rel="stylesheet" href="/assets/css/style.css">
 </head>
@@ -11,8 +11,8 @@
 <div class="auth-page">
   <div class="auth-card auth-card-wide">
     <div class="auth-logo">🎫</div>
-    <h1>Bienvenue !</h1>
-    <p class="sub">Ce dashboard se protège avec une connexion Discord — seuls les comptes que tu autorises pourront y accéder. Il te faut une application Discord dédiée (gratuite, 1 minute à créer).</p>
+    <h1>Crée ton espace</h1>
+    <p class="sub">Chaque client a sa propre application Discord pour se connecter au dashboard (isolation totale, aucune donnée partagée). Il te faut ton code client, et une application Discord dédiée (gratuite, 1 minute à créer).</p>
 
     <div class="setup-steps">
       <div class="setup-step">
@@ -25,26 +25,36 @@
       </div>
       <div class="setup-step">
         <span class="setup-step-num">3</span>
-        <div>Toujours dans <strong>OAuth2 → Redirects</strong>, ajoute exactement l'URL pré-remplie ci-dessous, puis colle tes identifiants ici.</div>
+        <div>Toujours dans <strong>OAuth2 → Redirects</strong>, ajoute exactement l'URL affichée ci-dessous.</div>
       </div>
+    </div>
+
+    <div class="field">
+      <label>Redirect URI à coller dans Discord</label>
+      <input type="text" id="redirect-uri" class="mono" readonly>
+      <p class="field-hint">Identique pour tout le monde — c'est ton propre Client ID/Secret qui isole ton espace, pas cette URL.</p>
     </div>
 
     <div class="auth-error" id="error"></div>
     <form id="setup-form">
       <div class="field">
-        <label for="client-id">Client ID</label>
+        <label for="code">Code client</label>
+        <input type="text" id="code" class="mono" placeholder="TCKT-XXXX-XXXX-XXXX" required autocomplete="off">
+        <p class="field-hint">Ce code te servira aussi à te reconnecter plus tard sur /login.</p>
+      </div>
+      <div class="field">
+        <label for="name">Nom de ton espace</label>
+        <input type="text" id="name" placeholder="ex: Mon Serveur" required autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="client-id">Client ID Discord</label>
         <input type="text" id="client-id" class="mono" required autocomplete="off">
       </div>
       <div class="field">
-        <label for="client-secret">Client Secret</label>
+        <label for="client-secret">Client Secret Discord</label>
         <input type="password" id="client-secret" class="mono" required autocomplete="off">
       </div>
-      <div class="field">
-        <label for="redirect-uri">Redirect URI</label>
-        <input type="text" id="redirect-uri" class="mono" required>
-        <p class="field-hint">À coller identiquement dans "OAuth2 → Redirects" sur le Developer Portal.</p>
-      </div>
-      <button type="submit" class="btn-primary" style="width:100%">Activer la connexion Discord</button>
+      <button type="submit" class="btn-primary" style="width:100%">Créer mon espace</button>
     </form>
   </div>
 </div>
@@ -65,9 +75,10 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorBox.classList.remove('show');
   const body = {
+    code: document.getElementById('code').value.trim(),
+    name: document.getElementById('name').value.trim(),
     clientId: document.getElementById('client-id').value.trim(),
     clientSecret: document.getElementById('client-secret').value.trim(),
-    redirectUri: redirectInput.value.trim(),
   };
   const res = await fetch('/api/setup', {
     method: 'POST',
@@ -80,7 +91,7 @@ form.addEventListener('submit', async (e) => {
     errorBox.classList.add('show');
     return;
   }
-  window.location.href = '/login';
+  window.location.href = data.loginUrl;
 });
 </script>
 </body>
