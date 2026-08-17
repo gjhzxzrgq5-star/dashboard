@@ -61,16 +61,6 @@ function requireRole(...allowed) {
   };
 }
 
-function requireNoAuthAppYet(req, res, next) {
-  if (!globalStore.hasAuthApp()) return next();
-  return res.redirect('/login');
-}
-
-function requireAuthAppSet(req, res, next) {
-  if (globalStore.hasAuthApp()) return next();
-  return res.redirect('/setup');
-}
-
 async function readTickets(tenantId) {
   try {
     const [rows] = await db.query('SELECT data FROM tickets WHERE tenant_id = ? ORDER BY created_at DESC', [tenantId]);
@@ -195,46 +185,101 @@ function createDashboardServer() {
   });
 
   app.get('/', (req, res) => {
-    if (!globalStore.hasAuthApp()) return res.redirect('/setup');
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     return res.redirect('/accueil');
   });
 
-  app.get('/setup', requireNoAuthAppYet, (req, res) => {
+  // ── Création d'un nouvel espace client (sa propre appli Discord) ──
+  app.get('/setup', (req, res) => {
     res.type('html').send(readView('setup.html'));
   });
 
-  app.get('/api/setup/default-redirect', requireNoAuthAppYet, (req, res) => {
+  function defaultRedirectUri(req) {
     const proto = req.headers['x-forwarded-proto'] || req.protocol;
-    res.json({ redirectUri: `${proto}://${req.get('host')}/api/auth/discord/callback` });
+    return `${proto}://${req.get('host')}/api/auth/discord/callback`;
+  }
+
+  app.get('/api/setup/default-redirect', (req, res) => {
+    res.json({ redirectUri: defaultRedirectUri(req) });
   });
 
-  app.post('/api/setup', requireNoAuthAppYet, (req, res) => {
-    const { clientId, clientSecret, redirectUri } = req.body || {};
-    if (!clientId || !clientSecret || !redirectUri) {
-      return res.status(400).json({ error: "Client ID, Client Secret et Redirect URI sont obligatoires." });
+  app.post('/api/setup', async (req, res) => {
+    const { code, name, clientId, clientSecret } = req.body || {};
+    if (!code || !name || !clientId || !clientSecret) {
+      return res.status(400).json({ error: 'Code client, nom, Client ID et Client Secret sont obligatoires.' });
     }
-    globalStore.setAuthConfig({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), redirectUri: redirectUri.trim() });
-    res.json({ ok: true });
+
+    try {
+      const check = await customerCodes.checkCode(code);
+      if (!check.valid) {
+        const messages = {
+          not_found: "Ce code client n'existe pas. Vérifie ta saisie.",
+          already_used: 'Ce code a déjà été utilisé.',
+          empty: 'Merci de saisir ton code client.',
+        };
+        return res.status(400).json({ error: messages[check.reason] || 'Code invalide.' });
+      }
+
+      const { tenantId, slug } = await tenantManager.createTenantWithApp({
+        name: name.trim(),
+        clientId: clientId.trim(),
+        clientSecret: clientSecret.trim(),
+      });
+
+      const redeemed = await customerCodes.redeemCode(code, null, null);
+      if (!redeemed.ok) {
+        // Le code a été pris entre le check et le redeem (course) : on
+        // annule la création du tenant pour ne pas laisser d'espace
+        // "gratuit" derrière un code invalide.
+        await db.query('DELETE FROM tenants WHERE id = ?', [tenantId]);
+        return res.status(400).json({ error: 'Ce code a déjà été utilisé.' });
+      }
+
+      const store = await tenantManager.getStore(tenantId);
+      if (redeemed.planType) {
+        store.setSubscription({ planType: redeemed.planType, active: true });
+      }
+      await db.query('UPDATE customer_codes SET tenant_id = ? WHERE code = ?', [tenantId, customerCodes.normalizeCode(code)]);
+
+      res.json({ ok: true, slug, loginUrl: `/login/${slug}` });
+    } catch (err) {
+      console.error('Erreur création espace client:', err.message);
+      res.status(500).json({ error: 'Erreur serveur, réessaie dans un instant.' });
+    }
   });
 
-  // ── Login via Discord OAuth2 ────────────────────────────
-  app.get('/login', requireAuthAppSet, (req, res) => {
+  // ── Login via Discord OAuth2 (une appli Discord PAR client) ───────
+  app.get('/login', (req, res) => {
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
     res.type('html').send(readView('login.html'));
   });
 
- app.get('/api/auth/discord', requireAuthAppSet, (req, res) => {
+  app.get('/login/:slug', async (req, res) => {
+    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
+    const tenant = await tenantManager.findTenantBySlug(req.params.slug);
+    if (!tenant) {
+      return res.redirect('/login?error=' + encodeURIComponent("Espace introuvable. Vérifie ton identifiant."));
+    }
+    res.type('html').send(readView('login.html'));
+  });
+
+  app.get('/api/auth/discord/:slug', async (req, res) => {
+    const tenant = await tenantManager.findTenantBySlug(req.params.slug);
+    if (!tenant || !tenant.client_id) {
+      return res.redirect('/login?error=' + encodeURIComponent('Espace introuvable.'));
+    }
+
     // Réinitialise la session pour éviter les conflits d'état
     req.session.oauthState = null;
+    req.session.oauthTenantId = null;
 
-    const { clientId, redirectUri } = globalStore.getAuthConfig();
     const state = crypto.randomBytes(16).toString('hex');
     req.session.oauthState = state;
+    req.session.oauthTenantId = tenant.id;
 
     const url = new URL('https://discord.com/oauth2/authorize');
-    url.searchParams.set('client_id', clientId);
-    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('client_id', tenant.client_id);
+    url.searchParams.set('redirect_uri', defaultRedirectUri(req));
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'identify');
     url.searchParams.set('state', state);
@@ -242,22 +287,28 @@ function createDashboardServer() {
     res.redirect(url.toString());
   });
 
-  app.get('/api/auth/discord/callback', requireAuthAppSet, async (req, res) => {
+  app.get('/api/auth/discord/callback', async (req, res) => {
     const { code, state } = req.query;
-    if (!code || !state || state !== req.session.oauthState) {
+    const tenantId = req.session.oauthTenantId;
+    if (!code || !state || state !== req.session.oauthState || !tenantId) {
       return res.redirect('/login?error=' + encodeURIComponent('Requête invalide ou expirée, réessaie de te connecter.'));
     }
     delete req.session.oauthState;
+    delete req.session.oauthTenantId;
 
-    const { clientId, clientSecret, redirectUri } = globalStore.getAuthConfig();
+    const tenant = await tenantManager.findTenantById(tenantId);
+    if (!tenant || !tenant.client_id || !tenant.client_secret) {
+      return res.redirect('/login?error=' + encodeURIComponent('Espace introuvable.'));
+    }
+    const loginUrl = `/login/${tenant.slug}`;
 
     try {
       // Authentification Basic Auth + URLSearchParams encodé en chaîne de caractères
-      const credentials = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
+      const credentials = Buffer.from(`${tenant.client_id}:${tenant.client_secret}`).toString('base64');
       const body = new URLSearchParams({
         grant_type: 'authorization_code',
         code: String(code),
-        redirect_uri: redirectUri.trim(),
+        redirect_uri: defaultRedirectUri(req),
       });
 
       const tokenRes = await fetch(`${DISCORD_API}/oauth2/token`, {
@@ -292,21 +343,29 @@ function createDashboardServer() {
           : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
       };
 
-      const tenantId = await tenantManager.findTenantIdForDiscordUser(user.id);
+      // Le tenant a-t-il déjà un propriétaire ?
+      let authorized = false;
+      if (!tenant.owner_discord_id) {
+        // Première connexion sur cet espace : ce compte en devient le
+        // propriétaire (opération atomique, protège contre le double-clic).
+        authorized = await tenantManager.claimTenant(tenant.id, user.id);
+      } else {
+        const store = await tenantManager.getStore(tenant.id);
+        authorized = store.isAdmin(user.id);
+      }
 
-      if (!tenantId) {
-        req.session.pendingUser = discordProfile;
-        return res.redirect('/activate');
+      if (!authorized) {
+        return res.redirect(loginUrl + '?error=' + encodeURIComponent("Ce compte Discord n'a pas accès à cet espace."));
       }
 
       req.session.discordUser = discordProfile;
-      req.session.tenantId = tenantId;
+      req.session.tenantId = tenant.id;
 
       try {
         await db.query(
           `INSERT INTO users (discord_id, username, tenant_id) VALUES (?, ?, ?)
            ON DUPLICATE KEY UPDATE username = VALUES(username), tenant_id = VALUES(tenant_id)`,
-          [user.id, user.global_name || user.username, tenantId]
+          [user.id, user.global_name || user.username, tenant.id]
         );
 
         const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [user.id]);
@@ -325,74 +384,7 @@ function createDashboardServer() {
       res.redirect('/dashboard');
     } catch (err) {
       console.error('Erreur OAuth Discord:', err.message);
-      res.redirect('/login?error=' + encodeURIComponent('Connexion Discord échouée, réessaie.'));
-    }
-  });
-
-  // ── Activation du code client ──────────
-  app.get('/activate', requireAuthAppSet, (req, res) => {
-    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
-    if (!req.session.pendingUser) return res.redirect('/login');
-    res.type('html').send(readView('activate.html'));
-  });
-
-  app.get('/api/activate/me', (req, res) => {
-    if (!req.session.pendingUser) return res.status(401).json({ error: 'no_pending_user' });
-    res.json({ user: req.session.pendingUser });
-  });
-
-  app.post('/api/activate', async (req, res) => {
-    if (!req.session.pendingUser) return res.status(401).json({ error: 'no_pending_user' });
-    const { code } = req.body || {};
-    if (!code) return res.status(400).json({ error: 'Merci de saisir ton code client.' });
-
-    const pending = req.session.pendingUser;
-
-    try {
-      const result = await customerCodes.redeemCode(code, pending.id, pending.username);
-      if (!result.ok) {
-        const messages = {
-          not_found: "Ce code client n'existe pas. Vérifie ta saisie.",
-          already_used: 'Ce code a déjà été utilisé.',
-          empty: 'Merci de saisir ton code client.',
-        };
-        return res.status(400).json({ error: messages[result.reason] || 'Code invalide.' });
-      }
-
-      const tenantId = await tenantManager.createTenantForDiscordUser(pending.id, pending.username);
-      const store = await tenantManager.getStore(tenantId);
-
-      req.session.discordUser = pending;
-      req.session.tenantId = tenantId;
-      delete req.session.pendingUser;
-
-      if (result.planType) {
-        store.setSubscription({ planType: result.planType, active: true });
-      }
-
-      try {
-        await db.query('UPDATE customer_codes SET tenant_id = ? WHERE code = ?', [tenantId, customerCodes.normalizeCode(code)]);
-        await db.query(
-          `INSERT INTO users (discord_id, username, tenant_id) VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE username = VALUES(username), tenant_id = VALUES(tenant_id)`,
-          [pending.id, pending.username, tenantId]
-        );
-        const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [pending.id]);
-        const dbUserId = userRows[0].id;
-        req.session.discordUser.dbId = dbUserId;
-        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        await db.query(
-          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
-          [dbUserId, ip, req.headers['user-agent'] || '']
-        );
-      } catch (sqlErr) {
-        console.error("Erreur SQL lors de l'activation :", sqlErr.message);
-      }
-
-      res.json({ ok: true });
-    } catch (err) {
-      console.error('Erreur activation code client:', err.message);
-      res.status(500).json({ error: "Erreur serveur, réessaie dans un instant." });
+      res.redirect(loginUrl + '?error=' + encodeURIComponent('Connexion Discord échouée, réessaie.'));
     }
   });
 
@@ -421,7 +413,7 @@ function createDashboardServer() {
   });
 
   // ── Dashboard ──────────
-  app.get('/dashboard', requireAuthAppSet, requireAuth, (req, res) => {
+  app.get('/dashboard', requireAuth, (req, res) => {
     res.type('html').send(readView('dashboard.html'));
   });
 
