@@ -43,7 +43,7 @@
   ],
   "subscription": {
     "customerId": "",
-    "planType": "free",
+    "planType": "none",
     "active": false,
     "autoRenew": false,
     "options": {
