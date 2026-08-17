@@ -112,6 +112,7 @@ const VIEW_ROLES = {
   customization: ['administrateur'],
   types: ['administrateur'],
   access: ['administrateur'],
+  parametres: ['administrateur', 'moderateur', 'visiteur'],
   changelog: ['administrateur', 'moderateur', 'visiteur'],
 };
 
@@ -142,8 +143,94 @@ async function loadMe() {
     const name = document.getElementById('user-name');
     if (avatar) avatar.src = data.user.avatar;
     if (name) name.textContent = data.user.username;
+
+    const settingsAvatar = document.getElementById('settings-avatar-preview');
+    const settingsUsername = document.getElementById('settings-username');
+    if (settingsAvatar) settingsAvatar.src = data.user.avatar;
+    if (settingsUsername) settingsUsername.value = data.user.username;
+
     applyRoleRestrictions(data.role);
   } catch {}
+}
+
+// ── Paramètres : photo de profil ───────────────────────────
+function initProfileSettings() {
+  const fileInput = document.getElementById('settings-avatar-input');
+  const preview = document.getElementById('settings-avatar-preview');
+  const saveBtn = document.getElementById('settings-avatar-save');
+  const cancelBtn = document.getElementById('settings-avatar-cancel');
+  if (!fileInput || !preview || !saveBtn || !cancelBtn) return;
+
+  let pendingDataUrl = null;
+  const previousSrc = preview.src;
+
+  function resizeImage(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Image invalide.'));
+        img.onload = () => {
+          const size = 256;
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          const scale = Math.max(size / img.width, size / img.height);
+          const w = img.width * scale;
+          const h = img.height * scale;
+          ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|gif|webp)$/.test(file.type)) {
+      toast("Format d'image non supporté.", true);
+      fileInput.value = '';
+      return;
+    }
+    try {
+      pendingDataUrl = await resizeImage(file);
+      preview.src = pendingDataUrl;
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+    } catch (err) {
+      toast(err.message || 'Impossible de lire cette image.', true);
+    }
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    pendingDataUrl = null;
+    fileInput.value = '';
+    preview.src = previousSrc;
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    if (!pendingDataUrl) return;
+    saveBtn.disabled = true;
+    try {
+      const data = await api('POST', '/api/profile/avatar', { avatar: pendingDataUrl });
+      const sidebarAvatar = document.getElementById('user-avatar');
+      if (sidebarAvatar) sidebarAvatar.src = data.avatar;
+      fileInput.value = '';
+      pendingDataUrl = null;
+      cancelBtn.disabled = true;
+      toast('Photo de profil mise à jour !');
+    } catch (err) {
+      toast(err.message || 'Erreur lors de la sauvegarde.', true);
+      saveBtn.disabled = false;
+    }
+  });
 }
 
 // ── Statut du bot ─────────────────────────────────────────
@@ -1112,6 +1199,7 @@ document.getElementById('toggle-status-bot')?.addEventListener('change', (e) => 
 document.addEventListener('DOMContentLoaded', () => {
   initNavigation();
   initGeneralAccordion();
+  initProfileSettings();
 
   // Live Console Events
   const ticketSelect = document.getElementById('select-active-ticket');
