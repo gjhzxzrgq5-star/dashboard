@@ -137,15 +137,15 @@
 </nav>
 
 <section class="hero">
-  <h1>Choisis ton <span class="accent">offre</span></h1>
-  <p>Sélectionne le plan adapté à ton serveur, règle en un clic via Revolut ou PayPal, puis connecte-toi avec Discord pour accéder à ton dashboard.</p>
+  <h1>Notre <span class="accent">offre</span></h1>
+  <p>Une formule simple et complète pour gérer les tickets de ton serveur. Règle en un clic via Revolut ou PayPal, puis connecte-toi avec Discord pour accéder à ton dashboard.</p>
 </section>
 
 <section class="pricing-section">
   <div class="pricing-grid">
 
     <!-- ── Offre Standard ─────────────────────────────── -->
-    <div class="plan-card" id="plan-standard">
+    <div class="plan-card featured" id="plan-standard">
       <div class="plan-name">Standard</div>
       <p class="plan-desc">L'essentiel pour gérer les tickets de ton serveur.</p>
       <div class="plan-price">
@@ -156,31 +156,10 @@
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Bot de tickets sur 1 serveur Discord</li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Dashboard web & statistiques de base</li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Console live & export CSV</li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Support standard (48h)</li>
-        <li class="disabled"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Intégration FiveM</li>
-        <li class="disabled"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Sauvegardes automatiques</li>
-      </ul>
-      <button class="btn-plan btn-ghost" onclick="openPayModal('standard')">Choisir cette offre</button>
-    </div>
-
-    <!-- ── Offre Premium ──────────────────────────────── -->
-    <div class="plan-card featured" id="plan-premium">
-      <span class="plan-badge">Populaire</span>
-      <div class="plan-name">Premium</div>
-      <p class="plan-desc">Toutes les fonctionnalités, pour les serveurs qui veulent aller plus loin.</p>
-      <div class="plan-price">
-        <span class="amount">5,50&nbsp;€</span>
-        <span class="cycle">/ mois</span>
-      </div>
-      <ul class="plan-features">
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Tout ce qui est inclus dans Standard</li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Intégration FiveM</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Réponse sous 24h</li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Sauvegardes automatiques</li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Traitement prioritaire des tickets</li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Support prioritaire (24h)</li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Serveurs Discord illimités</li>
       </ul>
-      <button class="btn-plan btn-primary" onclick="openPayModal('premium')">Choisir cette offre</button>
+      <button class="btn-plan btn-primary" onclick="openPayModal('standard')">Choisir cette offre</button>
     </div>
 
   </div>
@@ -239,11 +218,6 @@
       label: 'Offre Standard',
       price: '2,50 € / mois',
       paypalLink: 'https://paypal.me/tonpseudo/2.50',
-    },
-    premium: {
-      label: 'Offre Premium',
-      price: '5,50 € / mois',
-      paypalLink: 'https://paypal.me/tonpseudo/5.50',
     },
   };
 
