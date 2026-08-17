@@ -1,1161 +1,885 @@
-// ── État global ───────────────────────────────────────────
-let state = {
-  bot: {},
-  ticketTypes: [],
-  guilds: [],
-  panelChannels: [],
-  staffCategories: [],
-  staffRoles: [],
-  me: null,
-  admins: [],
-};
-
-// ── Utilitaires ───────────────────────────────────────────
-async function api(method, url, body) {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (res.status === 401) {
-    window.location.href = '/login';
-    throw new Error('unauthorized');
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — MP MOI</title>
+<link rel="stylesheet" href="/assets/css/style.css">
+<style>
+  .icon-svg {
+    vertical-align: middle;
+    display: inline-block;
+    flex-shrink: 0;
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
-  return data;
-}
-
-let toastTimer;
-function toast(message, isError = false) {
-  const el = document.getElementById('toast');
-  if (!el) return;
-  el.textContent = message;
-  el.classList.toggle('error', isError);
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
-}
-
-function fillSelect(select, items, { value, label, placeholder }) {
-  if (!select) return;
-  const current = select.value;
-  select.innerHTML = '';
-  if (placeholder) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = placeholder;
-    select.appendChild(opt);
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
   }
-  for (const item of items) {
-    const opt = document.createElement('option');
-    opt.value = value(item);
-    opt.textContent = label(item);
-    select.appendChild(opt);
+  .live-chat-box {
+    display: flex;
+    flex-direction: column;
+    height: 350px;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.2);
   }
-  if ([...select.options].some((o) => o.value === current)) select.value = current;
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// ── LAZY LOADING DES VUES & NAVIGATION ────────────────────
-const LAZY_LOADERS = { 
-  stats: loadStats, 
-  access: loadAdmins,
-  livechat: loadTickets,
-  'open-tickets': loadOpenTickets,
-};
-const loadedViews = new Set(['overview']);
-
-function initNavigation() {
-  document.querySelectorAll('.nav-item').forEach((item) => {
-    item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
-      document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-      
-      item.classList.add('active');
-      const viewName = item.dataset.view;
-      const targetView = document.getElementById(`view-${viewName}`);
-      if (targetView) targetView.classList.add('active');
-
-      if (!loadedViews.has(viewName) && LAZY_LOADERS[viewName]) {
-        loadedViews.add(viewName);
-        LAZY_LOADERS[viewName]();
-      }
-    });
-  });
-}
-
-document.getElementById('logout-btn')?.addEventListener('click', async () => {
-  await api('POST', '/api/logout');
-  window.location.href = '/login';
-});
-
-// ── Utilisateur connecté (Discord) ─────────────────────────
-const VIEW_ROLES = {
-  overview: ['administrateur', 'moderateur', 'visiteur'],
-  subscription: ['administrateur'],
-  'open-tickets': ['administrateur', 'moderateur', 'visiteur'],
-  livechat: ['administrateur', 'moderateur'],
-  stats: ['administrateur', 'moderateur', 'visiteur'],
-  connection: ['administrateur'],
-  general: ['administrateur'],
-  types: ['administrateur'],
-  access: ['administrateur'],
-  parametres: ['administrateur', 'moderateur', 'visiteur'],
-  changelog: ['administrateur', 'moderateur', 'visiteur'],
-};
-
-function applyRoleRestrictions(role) {
-  const roleLabel = document.getElementById('user-role-label');
-  if (roleLabel) roleLabel.textContent = ROLE_LABELS[role] || role;
-
-  document.querySelectorAll('.nav-item[data-view]').forEach((item) => {
-    const allowed = VIEW_ROLES[item.dataset.view];
-    if (allowed && !allowed.includes(role)) item.style.display = 'none';
-  });
-
-  // Si la vue actuellement active vient d'être masquée, on retombe sur l'aperçu.
-  const activeItem = document.querySelector('.nav-item.active');
-  if (activeItem && activeItem.style.display === 'none') {
-    const overviewItem = document.querySelector('.nav-item[data-view="overview"]');
-    overviewItem?.click();
+  .chat-messages {
+    flex: 1;
+    padding: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-}
-
-async function loadMe() {
-  try {
-    const data = await api('GET', '/api/me');
-    state.me = data.user;
-    state.admins = data.admins;
-    state.role = data.role;
-    const avatar = document.getElementById('user-avatar');
-    const name = document.getElementById('user-name');
-    if (avatar) avatar.src = data.user.avatar;
-    if (name) name.textContent = data.user.username;
-
-    const settingsAvatar = document.getElementById('settings-avatar-preview');
-    const settingsUsername = document.getElementById('settings-username');
-    if (settingsAvatar) settingsAvatar.src = data.user.avatar;
-    if (settingsUsername) settingsUsername.value = data.user.username;
-
-    applyRoleRestrictions(data.role);
-  } catch {}
-}
-
-// ── Paramètres : photo de profil ───────────────────────────
-function initProfileSettings() {
-  const fileInput = document.getElementById('settings-avatar-input');
-  const preview = document.getElementById('settings-avatar-preview');
-  const saveBtn = document.getElementById('settings-avatar-save');
-  const cancelBtn = document.getElementById('settings-avatar-cancel');
-  if (!fileInput || !preview || !saveBtn || !cancelBtn) return;
-
-  let pendingDataUrl = null;
-  const previousSrc = preview.src;
-
-  function resizeImage(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = () => reject(new Error('Image invalide.'));
-        img.onload = () => {
-          const size = 256;
-          const canvas = document.createElement('canvas');
-          canvas.width = size;
-          canvas.height = size;
-          const ctx = canvas.getContext('2d');
-          const scale = Math.max(size / img.width, size / img.height);
-          const w = img.width * scale;
-          const h = img.height * scale;
-          ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+  .chat-input-row {
+    display: flex;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.4);
+    gap: 8px;
   }
-
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    if (!/^image\/(png|jpe?g|gif|webp)$/.test(file.type)) {
-      toast("Format d'image non supporté.", true);
-      fileInput.value = '';
-      return;
-    }
-    try {
-      pendingDataUrl = await resizeImage(file);
-      preview.src = pendingDataUrl;
-      saveBtn.disabled = false;
-      cancelBtn.disabled = false;
-    } catch (err) {
-      toast(err.message || 'Impossible de lire cette image.', true);
-    }
-  });
-
-  cancelBtn.addEventListener('click', () => {
-    pendingDataUrl = null;
-    fileInput.value = '';
-    preview.src = previousSrc;
-    saveBtn.disabled = true;
-    cancelBtn.disabled = true;
-  });
-
-  saveBtn.addEventListener('click', async () => {
-    if (!pendingDataUrl) return;
-    saveBtn.disabled = true;
-    try {
-      const data = await api('POST', '/api/profile/avatar', { avatar: pendingDataUrl });
-      const sidebarAvatar = document.getElementById('user-avatar');
-      if (sidebarAvatar) sidebarAvatar.src = data.avatar;
-      fileInput.value = '';
-      pendingDataUrl = null;
-      cancelBtn.disabled = true;
-      toast('Photo de profil mise à jour !');
-    } catch (err) {
-      toast(err.message || 'Erreur lors de la sauvegarde.', true);
-      saveBtn.disabled = false;
-    }
-  });
-}
-
-// ── Statut du bot ─────────────────────────────────────────
-const STATUS_LABELS = {
-  online: 'En ligne',
-  connecting: 'Connexion…',
-  offline: 'Hors ligne',
-  error: 'Erreur',
-};
-
-async function refreshStatus() {
-  try {
-    const s = await api('GET', '/api/status');
-    const dot = document.getElementById('status-dot');
-    const text = document.getElementById('status-text');
-    if (dot) dot.className = `status-dot ${s.status}`;
-    if (text) text.textContent = STATUS_LABELS[s.status] || s.status;
-
-    const lines = [];
-    lines.push(`<strong>Statut :</strong> ${STATUS_LABELS[s.status] || s.status}`);
-    if (s.tag) lines.push(`<strong>Compte :</strong> <span class="mono">${escapeHtml(s.tag)}</span>`);
-    if (s.guildCount) lines.push(`<strong>Serveurs :</strong> ${s.guildCount}`);
-    if (s.ping !== null && s.ping >= 0) lines.push(`<strong>Latence :</strong> ${s.ping} ms`);
-    if (s.lastError) lines.push(`<strong style="color:var(--coral)">Dernière erreur :</strong> ${escapeHtml(s.lastError)}`);
-    
-    const overviewStatus = document.getElementById('overview-status');
-    if (overviewStatus) overviewStatus.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
-  } catch {}
-}
-
-// ── Chargement des settings ───────────────────────────────
-async function loadSettings() {
-  const data = await api('GET', '/api/settings');
-  state.bot = data.bot;
-  state.ticketTypes = data.ticketTypes;
-
-  const tokenInput = document.getElementById('input-token');
-  if (tokenInput) tokenInput.placeholder = data.hasToken ? data.bot.token : 'Colle ton token ici';
-
-  const setInputValue = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val || '';
-  };
-
-  setInputValue('input-panel-title', data.bot.panelTitle);
-  setInputValue('input-panel-desc', data.bot.panelDescription);
-  setInputValue('input-panel-banner', data.bot.panelBanner);
-  setInputValue('input-embed-color', data.bot.embedColor);
-  setInputValue('input-footer', data.bot.footerText);
-
-  renderTicketTypes();
-}
-
-async function loadGuilds() {
-  state.guilds = await api('GET', '/api/discord/guilds');
-
-  const panelGuildSelect = document.getElementById('select-panel-guild');
-  const staffGuildSelect = document.getElementById('select-staff-guild');
-
-  const opts = { value: (g) => g.id, label: (g) => g.name, placeholder: 'Sélectionner un serveur…' };
-  fillSelect(panelGuildSelect, state.guilds, opts);
-  fillSelect(staffGuildSelect, state.guilds, opts);
-
-  if (panelGuildSelect) panelGuildSelect.value = state.bot.panelGuildId || '';
-  if (staffGuildSelect) staffGuildSelect.value = state.bot.staffGuildId || '';
-
-  if (state.guilds.length === 0) {
-    toast("Le bot n'est connecté à aucun serveur pour l'instant.", true);
+  .changelog-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-right: 8px;
   }
-
-  await Promise.all([onPanelGuildChange(false), onStaffGuildChange(false)]);
-}
-
-async function onPanelGuildChange(fromUser = true) {
-  const guildSelect = document.getElementById('select-panel-guild');
-  const channelSelect = document.getElementById('select-panel-channel');
-  if (!guildSelect || !channelSelect) return;
-
-  const guildId = guildSelect.value;
-  if (!guildId) return fillSelect(channelSelect, [], { value: () => '', label: () => '', placeholder: 'Choisis un serveur d\'abord' });
-
-  state.panelChannels = await api('GET', `/api/discord/guilds/${guildId}/channels`);
-  fillSelect(channelSelect, state.panelChannels, {
-    value: (c) => c.id,
-    label: (c) => `#${c.name}`,
-    placeholder: 'Sélectionner un salon…',
-  });
-  if (!fromUser) channelSelect.value = state.bot.panelChannelId || '';
-  else channelSelect.value = '';
-}
-
-async function onStaffGuildChange(fromUser = true) {
-  const guildSelect = document.getElementById('select-staff-guild');
-  const categorySelect = document.getElementById('select-staff-category');
-  if (!guildSelect || !categorySelect) return;
-
-  const guildId = guildSelect.value;
-  if (!guildId) {
-    fillSelect(categorySelect, [], { value: () => '', label: () => '', placeholder: 'Choisis un serveur d\'abord' });
-    state.staffRoles = [];
-    state.staffCategories = [];
-    renderTicketTypes();
-    return;
+  .tag-feat { background: rgba(0, 223, 216, 0.2); color: #00dfd8; border: 1px solid #00dfd8; }
+  .tag-fix { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+  .tag-imp { background: rgba(255, 184, 0, 0.2); color: #ffb800; border: 1px solid #ffb800; }
+  .changelog-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0 0;
   }
-
-  const [categories, roles] = await Promise.all([
-    api('GET', `/api/discord/guilds/${guildId}/categories`),
-    api('GET', `/api/discord/guilds/${guildId}/roles`),
-  ]);
-
-  state.staffCategories = categories;
-  state.staffRoles = roles;
-
-  fillSelect(categorySelect, categories, {
-    value: (c) => c.id,
-    label: (c) => c.name,
-    placeholder: 'Aucune catégorie (Par défaut)',
-  });
-  if (!fromUser) categorySelect.value = state.bot.staffCategoryId || '';
-  else categorySelect.value = '';
-
-  renderTicketTypes();
-}
-
-document.getElementById('select-panel-guild')?.addEventListener('change', () => onPanelGuildChange(true));
-document.getElementById('select-staff-guild')?.addEventListener('change', () => onStaffGuildChange(true));
-
-// ── Enregistrement token & config ─────────────────────────
-document.getElementById('save-token-btn')?.addEventListener('click', async () => {
-  const token = document.getElementById('input-token').value.trim();
-  if (!token) return toast('Colle un token avant de sauvegarder.', true);
-  try {
-    await api('POST', '/api/settings/bot', { token });
-    toast('Token enregistré, connexion en cours…');
-    document.getElementById('input-token').value = '';
-    setTimeout(async () => {
-      await loadSettings();
-      await loadGuilds();
-      // Le bot vient (normalement) de se reconnecter : on tente de republier
-      // le panel et on remonte le vrai résultat, au lieu de laisser ça se
-      // passer silencieusement en tâche de fond sans aucun retour visible.
-      try {
-        await api('POST', '/api/bot/refresh-panel');
-        toast('Bot connecté, panel republié dans le salon configuré.');
-      } catch (err) {
-        toast(`Bot connecté, mais le panel n'a pas pu être envoyé : ${err.message}`, true);
-      }
-    }, 2500);
-  } catch (err) {
-    toast(err.message, true);
+  .changelog-list li {
+    margin-bottom: 8px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
   }
-});
-
-document.getElementById('save-general-btn')?.addEventListener('click', async () => {
-  const patch = {
-    panelGuildId: document.getElementById('select-panel-guild').value,
-    panelChannelId: document.getElementById('select-panel-channel').value,
-    staffGuildId: document.getElementById('select-staff-guild').value,
-    staffCategoryId: document.getElementById('select-staff-category').value,
-    panelTitle: document.getElementById('input-panel-title').value,
-    panelDescription: document.getElementById('input-panel-desc').value,
-    panelBanner: document.getElementById('input-panel-banner').value,
-    embedColor: document.getElementById('input-embed-color').value.replace('#', ''),
-    footerText: document.getElementById('input-footer').value,
-  };
-  try {
-    const res = await api('POST', '/api/settings/bot', patch);
-    state.bot = { ...state.bot, ...res.bot };
-    // res.panel contient le vrai résultat de la republication tentée côté
-    // serveur juste après la sauvegarde (voir /api/settings/bot).
-    if (res.panel && !res.panel.ok) {
-      toast(`Configuration enregistrée, mais le panel n'a pas pu être republié : ${res.panel.reason}`, true);
-    } else if (res.panel && res.panel.ok) {
-      toast('Configuration enregistrée et panel republié.');
-    } else {
-      toast('Configuration enregistrée.');
-    }
-  } catch (err) {
-    toast(err.message, true);
+  .tickets-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
   }
-});
-
-// ── Actions rapides ────────────────────────────────────────
-document.getElementById('refresh-panel-btn')?.addEventListener('click', async () => {
-  try {
-    await api('POST', '/api/bot/refresh-panel');
-    toast('Panel republié.');
-  } catch (err) {
-    toast(err.message, true);
+  .tickets-table th, .tickets-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   }
-});
-
-document.getElementById('restart-bot-btn')?.addEventListener('click', async () => {
-  try {
-    toast('Reconnexion en cours…');
-    await api('POST', '/api/bot/restart');
-    setTimeout(refreshStatus, 1500);
-  } catch (err) {
-    toast(err.message, true);
+  .tickets-table th {
+    background: rgba(0, 0, 0, 0.3);
+    color: #888;
+    font-size: 12px;
+    text-transform: uppercase;
   }
-});
-
-// ── Types de tickets ───────────────────────────────────────
-function roleNameById(id) {
-  const r = state.staffRoles.find((r) => r.id === id);
-  return r ? r.name : id;
-}
-
-function categoryNameById(id) {
-  const c = state.staffCategories.find((cat) => cat.id === id);
-  return c ? c.name : null;
-}
-
-function renderTicketTypes() {
-  const container = document.getElementById('types-list');
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (state.ticketTypes.length === 0) {
-    container.innerHTML = `<div class="empty-state"><div class="icon">🎟️</div>Aucun type de ticket. Clique sur "+ Nouveau type" pour commencer.</div>`;
-    return;
+  .badge-status {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    background: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+    border: 1px solid #2ecc71;
   }
+  .sub-status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .sub-active { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71; }
+  .sub-inactive { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+  .payment-method-card {
+    border: 1px solid var(--border-color, #333);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 14px;
+    background: rgba(0, 0, 0, 0.15);
+  }
+  .payment-method-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .payment-method-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: bold;
+    font-size: 15px;
+  }
+  .payment-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: bold;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .payment-logo.revolut { background: #0666EB; }
+  .payment-logo.paypal { background: #003087; }
+  .renew-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 13px;
+    color: #ccc;
+  }
+  /* ── Accordéon "liste Discord" pour Configuration générale ── */
+  .settings-accordion {
+    border: 1px solid var(--border-color, #333);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.15);
+  }
+  .settings-accordion > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 16px 18px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 0.15s ease;
+  }
+  .settings-accordion > summary::-webkit-details-marker { display: none; }
+  .settings-accordion > summary::marker { content: ""; }
+  .settings-accordion > summary:hover { background: rgba(255, 255, 255, 0.04); }
+  .settings-accordion[open] > summary { border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08)); }
 
-  for (const type of state.ticketTypes) {
-    const el = document.createElement('div');
-    el.className = 'ticket-stub';
-    const roleChips = (type.allowedRoles || [])
-      .map((rid) => `<span class="role-chip">${escapeHtml(roleNameById(rid))}</span>`)
-      .join('');
+  .accordion-summary-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .accordion-icon {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: rgba(88, 101, 242, 0.15);
+    color: var(--primary-color, #5865F2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .accordion-title-block { min-width: 0; }
+  .accordion-title-block .accordion-title {
+    font-weight: 700;
+    font-size: 15px;
+    display: block;
+  }
+  .accordion-title-block .accordion-sub {
+    font-size: 12.5px;
+    color: #888;
+    margin-top: 2px;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .accordion-chevron {
+    flex-shrink: 0;
+    color: #888;
+    transition: transform 0.2s ease;
+  }
+  .settings-accordion[open] .accordion-chevron { transform: rotate(90deg); }
 
-    const specificCategory = type.categoryId ? categoryNameById(type.categoryId) : null;
-    const catBadge = specificCategory 
-      ? `<span class="badge-ultra" style="margin-left:8px;">📁 ${escapeHtml(specificCategory)}</span>` 
-      : '';
+  .accordion-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .accordion-badge {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+    border: 1px solid rgba(46, 204, 113, 0.4);
+    margin-left: 8px;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">
+        <svg class="icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><path d="M12 6v12" stroke-dasharray="2 2"/></svg>
+      </div>
+      <div class="name">MP MOI</div>
+    </div>
 
-    el.innerHTML = `
-      <div class="stub-emoji">${escapeHtml(type.emoji) || '🎫'}</div>
-      <div class="stub-body">
-        <div class="stub-title-row">
-          <span class="color-dot" style="background:#${(type.color || '5865F2').replace('#', '')}"></span>
-          <span class="stub-title">${escapeHtml(type.label)}</span>
-          <span class="stub-id mono">${escapeHtml(type.id)}</span>
-          ${catBadge}
+    <div class="nav-item active" data-view="overview">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9c3.9 3.9 3.9 10.3 0 14.2"/></svg>
+      Vue d'ensemble
+    </div>
+    <div class="nav-item" data-view="subscription">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      Gestion & Abonnement
+    </div>
+    <div class="nav-item" data-view="open-tickets">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5v2"/><path d="M15 11v2"/><path d="M15 17v2"/><path d="M5 5h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4V7a2 2 0 0 1 2-2z"/></svg>
+      Tickets ouverts
+    </div>
+    <div class="nav-item" data-view="livechat">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Live Console & Chat
+    </div>
+    <div class="nav-item" data-view="stats">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Statistiques & Performance
+    </div>
+    <div class="nav-item" data-view="connection">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-2 2l-2 2m2-2l2 2m-4-2l2-2"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.4 11.6L21 2"/></svg>
+      Connexion bot
+    </div>
+    <div class="nav-item" data-view="general">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Configuration générale
+    </div>
+    <div class="nav-item" data-view="types">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+      Types de tickets
+    </div>
+    <div class="nav-item" data-view="access">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Accès admin
+    </div>
+    <div class="nav-item" data-view="parametres">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Paramètres
+    </div>
+    <div class="nav-item" data-view="changelog">
+      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Patch Notes
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-card" id="user-card">
+        <img id="user-avatar" class="user-avatar" alt="">
+        <div class="user-meta">
+          <div class="user-name" id="user-name">…</div>
+          <div class="user-sub">Administrateur</div>
         </div>
-        <div class="stub-desc">${escapeHtml(type.description || '')}</div>
-        <div class="stub-roles">${roleChips || '<span class="field-hint">Aucun rôle assigné — personne ne verra ce ticket.</span>'}</div>
       </div>
-      <div class="stub-actions">
-        <button class="btn-ghost edit-type-btn">✏️ Modifier</button>
+      <div class="status-pill" id="status-pill">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Chargement…</span>
       </div>
-    `;
-    el.querySelector('.edit-type-btn').addEventListener('click', () => openTypeModal(type));
-    container.appendChild(el);
-  }
-}
+      <button class="btn-ghost" id="logout-btn" style="width:100%; margin-top:12px;">Déconnexion</button>
+    </div>
+  </aside>
 
-// ── Modal type de ticket ───────────────────────────────────
-let selectedRoleIds = new Set();
+  <main class="main">
 
-function renderRolesPicker() {
-  const picker = document.getElementById('type-roles-picker');
-  if (!picker) return;
-  picker.innerHTML = '';
-
-  if (state.staffRoles.length === 0) {
-    picker.innerHTML = `<span class="field-hint">Aucun rôle disponible — sélectionne d'abord un serveur staff connecté dans "Configuration générale".</span>`;
-    return;
-  }
-
-  for (const role of state.staffRoles) {
-    const label = document.createElement('label');
-    label.className = 'role-option' + (selectedRoleIds.has(role.id) ? ' selected' : '');
-    label.innerHTML = `<input type="checkbox" value="${role.id}" ${selectedRoleIds.has(role.id) ? 'checked' : ''}> ${escapeHtml(role.name)}`;
-    label.querySelector('input').addEventListener('change', (e) => {
-      if (e.target.checked) selectedRoleIds.add(role.id);
-      else selectedRoleIds.delete(role.id);
-      label.classList.toggle('selected', e.target.checked);
-    });
-    picker.appendChild(label);
-  }
-}
-
-function openTypeModal(type = null) {
-  document.getElementById('type-modal-title').textContent = type ? 'Modifier le type de ticket' : 'Nouveau type de ticket';
-  document.getElementById('type-original-id').value = type ? type.id : '';
-  document.getElementById('type-emoji').value = type ? type.emoji : '';
-  document.getElementById('type-label').value = type ? type.label : '';
-  document.getElementById('type-id').value = type ? type.id : '';
-  document.getElementById('type-id').disabled = !!type;
-  document.getElementById('type-desc').value = type ? type.description : '';
-  document.getElementById('type-color').value = type ? type.color : '5865F2';
-  document.getElementById('type-delete-btn').style.display = type ? 'inline-flex' : 'none';
-
-  const categorySelect = document.getElementById('type-category');
-  if (categorySelect) {
-    categorySelect.innerHTML = '<option value="">Utiliser la catégorie par défaut (Globale)</option>';
-    
-    if (state.staffCategories && state.staffCategories.length > 0) {
-      state.staffCategories.forEach((cat) => {
-        const opt = document.createElement('option');
-        opt.value = cat.id;
-        opt.textContent = `📁 ${cat.name}`;
-        categorySelect.appendChild(opt);
-      });
-    }
-    categorySelect.value = type ? (type.categoryId || '') : '';
-  }
-
-  const welcomeInput = document.getElementById('type-welcome-msg');
-  if (welcomeInput) {
-    welcomeInput.value = type ? (type.welcomeMessage || '') : '';
-  }
-
-  selectedRoleIds = new Set(type ? type.allowedRoles || [] : []);
-  renderRolesPicker();
-
-  document.getElementById('type-modal-backdrop')?.classList.add('show');
-}
-
-function closeTypeModal() {
-  document.getElementById('type-modal-backdrop')?.classList.remove('show');
-}
-
-document.getElementById('add-type-btn')?.addEventListener('click', () => openTypeModal());
-document.getElementById('type-cancel-btn')?.addEventListener('click', closeTypeModal);
-
-document.getElementById('type-save-btn')?.addEventListener('click', async () => {
-  const originalId = document.getElementById('type-original-id').value;
-  const id = document.getElementById('type-id').value.trim().toLowerCase().replace(/\s+/g, '-');
-  const label = document.getElementById('type-label').value.trim();
-  const emoji = document.getElementById('type-emoji').value.trim();
-  const description = document.getElementById('type-desc').value.trim();
-  const color = document.getElementById('type-color').value.trim().replace('#', '') || '5865F2';
-  
-  const categoryId = document.getElementById('type-category')?.value || '';
-  const welcomeMessage = document.getElementById('type-welcome-msg')?.value.trim() || '';
-
-  if (!id || !label || !emoji) {
-    return toast('Emoji, nom et identifiant sont obligatoires.', true);
-  }
-  // Miroir de lib/config.js#isValidEmoji côté serveur : évite un aller-retour
-  // API inutile pour une erreur qu'on peut détecter tout de suite. La
-  // validation serveur reste la source de vérité (voir /api/settings/ticket-types).
-  const CUSTOM_EMOJI_RE = /^<a?:\w{2,32}:\d{17,20}>$/;
-  const UNICODE_EMOJI_RE = /^(\p{Extended_Pictographic}\uFE0F?)(\u200d\p{Extended_Pictographic}\uFE0F?)*$/u;
-  if (!CUSTOM_EMOJI_RE.test(emoji) && !UNICODE_EMOJI_RE.test(emoji)) {
-    return toast(`Emoji invalide : "${emoji}". Utilise un emoji Unicode (ex: 🎫) ou un emoji du serveur (ex: <:nom:1234567890>).`, true);
-  }
-
-  const newType = { 
-    id, 
-    label, 
-    emoji, 
-    description, 
-    color, 
-    categoryId,
-    welcomeMessage,
-    allowedRoles: [...selectedRoleIds] 
-  };
-
-  let updated;
-  if (originalId) {
-    updated = state.ticketTypes.map((t) => (t.id === originalId ? newType : t));
-  } else {
-    if (state.ticketTypes.some((t) => t.id === id)) {
-      return toast('Cet identifiant est déjà utilisé.', true);
-    }
-    updated = [...state.ticketTypes, newType];
-  }
-
-  try {
-    const res = await api('POST', '/api/settings/ticket-types', { ticketTypes: updated });
-    state.ticketTypes = res.ticketTypes;
-    renderTicketTypes();
-    closeTypeModal();
-    toast('Type de ticket enregistré !');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-document.getElementById('type-delete-btn')?.addEventListener('click', async () => {
-  const originalId = document.getElementById('type-original-id').value;
-  if (!confirm('Supprimer ce type de ticket ? Les boutons du panel seront mis à jour.')) return;
-
-  const updated = state.ticketTypes.filter((t) => t.id !== originalId);
-  try {
-    const res = await api('POST', '/api/settings/ticket-types', { ticketTypes: updated });
-    state.ticketTypes = res.ticketTypes;
-    renderTicketTypes();
-    closeTypeModal();
-    toast('Type de ticket supprimé.');
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-// ── Statistiques ───────────────────────────────────────────
-function typeLabel(typeId) {
-  const t = state.ticketTypes.find((t) => t.id === typeId);
-  return t ? `${t.emoji} ${t.label}` : typeId;
-}
-
-function formatDuration(ms) {
-  if (ms === null || ms === undefined) return '—';
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `${mins} min`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return `${hours} h ${remMins} min`;
-}
-
-function formatDate(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-}
-
-async function loadStats() {
-  let stats;
-  try {
-    stats = await api('GET', '/api/stats');
-  } catch (err) {
-    return toast(err.message, true);
-  }
-
-  const grid = document.getElementById('stat-grid');
-  if (grid) {
-    grid.innerHTML = `
-      <div class="stat-card">
-        <div class="stat-value">${stats.total}</div>
-        <div class="stat-label">Tickets créés</div>
+    <section class="view active" id="view-overview">
+      <div class="page-header">
+        <h1>Vue d'ensemble</h1>
+        <p>État de la connexion et actions rapides.</p>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color:var(--green)">${stats.open}</div>
-        <div class="stat-label">Actuellement ouverts</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${stats.closed}</div>
-        <div class="stat-label">Fermés</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color:${stats.unclaimedOpen > 0 ? 'var(--amber)' : 'var(--text)'}">${stats.unclaimedOpen}</div>
-        <div class="stat-label">Ouverts non pris en charge</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${formatDuration(stats.avgResolutionMs)}</div>
-        <div class="stat-label">Temps de résolution moyen</div>
-      </div>
-    `;
-  }
 
-  const byTypeEl = document.getElementById('stat-by-type');
-  if (byTypeEl) {
-    const entries = Object.entries(stats.byType).sort((a, b) => b[1] - a[1]);
-    if (entries.length === 0) {
-      byTypeEl.innerHTML = `<div class="empty-state"><div class="icon">📊</div>Aucun ticket pour l'instant.</div>`;
-    } else {
-      const max = Math.max(...entries.map(([, count]) => count));
-      byTypeEl.innerHTML = entries
-        .map(
-          ([typeId, count]) => `
-          <div class="bar-row">
-            <div class="bar-label">${escapeHtml(typeLabel(typeId))}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
-            <div class="bar-count">${count}</div>
-          </div>`
-        )
-        .join('');
-    }
-  }
+      <div class="panel">
+        <h3 class="panel-title">Statut du bot</h3>
+        <p class="panel-sub">Rafraîchi automatiquement toutes les 5 secondes.</p>
+        <div id="overview-status" style="font-size:14px; line-height:1.9;"></div>
+      </div>
 
-  const recentEl = document.getElementById('stat-recent');
-  if (recentEl) {
-    if (stats.recent.length === 0) {
-      recentEl.innerHTML = `<div class="empty-state"><div class="icon">🕓</div>Rien à afficher pour l'instant.</div>`;
-    } else {
-      recentEl.innerHTML = stats.recent
-        .map(
-          (t) => `
-          <div class="activity-row">
-            <span class="status-dot ${t.status === 'open' ? 'online' : 'offline'}"></span>
-            <div class="activity-body">
-              <div><strong>${escapeHtml(typeLabel(t.typeId))}</strong> — ${escapeHtml(t.userTag || 'inconnu')} <span class="stub-id mono">#${escapeHtml(t.id)}</span></div>
-              <div class="field-hint" style="margin-top:2px;">
-                ${t.status === 'open' ? `Ouvert le ${formatDate(t.createdAt)}` : `Fermé le ${formatDate(t.closedAt)}`}
-                ${t.claimedByTag ? ` · pris en charge par ${escapeHtml(t.claimedByTag)}` : ''}
-              </div>
+      <div class="panel">
+        <h3 class="panel-title">Actions rapides</h3>
+        <p class="panel-sub">Republie le panel de tickets ou force une reconnexion.</p>
+        <div style="display:flex; gap:10px;">
+          <button id="refresh-panel-btn" style="display:inline-flex; align-items:center; gap:8px;">
+            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Republier le panel
+          </button>
+          <button id="restart-bot-btn" style="display:inline-flex; align-items:center; gap:8px;">
+            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Reconnecter le bot
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-subscription">
+      <div class="page-header">
+        <h1>Gestion & Abonnement</h1>
+        <p>Consultez votre identifiant d'acheteur et gérez vos options d'abonnement.</p>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Informations de l'Acheteur</h3>
+        <p class="panel-sub">Renseignez votre identifiant client/acheteur pour lier vos options souscrites.</p>
+        <div class="field">
+          <label for="input-customer-id">Identifiant d'acheteur (Customer ID)</label>
+          <input type="text" id="input-customer-id" class="mono" placeholder="CUST-12345-XYZ">
+          <p class="field-hint">Cet identifiant débloque les fonctionnalités avancées sur votre compte.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Offre & Statut</h3>
+        <div class="field-row" style="align-items:center; justify-content:space-between;">
+          <div>
+            <p style="margin:0; font-weight:bold; font-size:16px;">Statut actuel : <span id="sub-status-badge" class="sub-status-badge sub-inactive">Inactif</span></p>
+          </div>
+          <div class="field" style="margin:0; min-width: 200px;">
+            <label for="select-plan-type">Formule souscrite</label>
+            <select id="select-plan-type">
+              <option value="none">Aucune offre active</option>
+              <option value="standard">Standard (2,50 € / mois)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row" style="align-items:center; margin-top:15px;">
+          <input type="checkbox" id="toggle-auto-renew" style="width:auto;">
+          <label for="toggle-auto-renew" style="margin:0;">Renouvellement automatique de l'abonnement</label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Moyens de paiement</h3>
+        <p class="panel-sub">Renseigne tes identifiants Revolut et/ou PayPal pour recevoir les paiements de tes clients, et active le renouvellement automatique par moyen de paiement.</p>
+
+        <div class="payment-method-card">
+          <div class="payment-method-header">
+            <div class="payment-method-title">
+              <span class="payment-logo revolut">R</span>
+              Revolut
             </div>
-          </div>`
-        )
-        .join('');
-    }
-  }
-}
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" id="toggle-revolut-enabled" style="width:auto;">
+              Activer
+            </label>
+          </div>
+          <div class="field">
+            <label for="input-revolut-tag">Identifiant Revolut (@RevolutTag)</label>
+            <input type="text" id="input-revolut-tag" class="mono" placeholder="@magikarpe">
+          </div>
+          <div class="field">
+            <label for="input-revolut-link">Lien de paiement Revolut.me</label>
+            <input type="url" id="input-revolut-link" class="mono" placeholder="https://revolut.me/magikarpe">
+            <p class="field-hint">Trouvable dans l'app Revolut → Profil → "Recevoir" → Partager le lien.</p>
+          </div>
+          <div class="renew-checkbox-row">
+            <input type="checkbox" id="toggle-revolut-renew" style="width:auto;">
+            <label for="toggle-revolut-renew" style="margin:0;">Autoriser le renouvellement automatique via Revolut</label>
+          </div>
+        </div>
 
-document.getElementById('export-csv-btn')?.addEventListener('click', () => {
-  window.location.href = '/api/tickets/export.csv';
-});
+        <div class="payment-method-card">
+          <div class="payment-method-header">
+            <div class="payment-method-title">
+              <span class="payment-logo paypal">P</span>
+              PayPal
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" id="toggle-paypal-enabled" style="width:auto;">
+              Activer
+            </label>
+          </div>
+          <div class="field">
+            <label for="input-paypal-email">Email PayPal</label>
+            <input type="email" id="input-paypal-email" class="mono" placeholder="magikarpedev@outlook.fr">
+          </div>
+          <div class="field">
+            <label for="input-paypal-link">Lien PayPal.me</label>
+            <input type="url" id="input-paypal-link" class="mono" placeholder="https://paypal.me/magikarpe">
+          </div>
+          <div class="renew-checkbox-row">
+            <input type="checkbox" id="toggle-paypal-renew" style="width:auto;">
+            <label for="toggle-paypal-renew" style="margin:0;">Autoriser le renouvellement automatique via PayPal</label>
+          </div>
+        </div>
+      </div>
 
-// ── Tickets ouverts ─────────────────────────────────────────
-function ticketStatusBadge(t) {
-  const base = 'display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;color:#fff;';
-  if (t.claimedByTag) {
-    return `<span style="${base}background:var(--green);">Pris en charge · ${escapeHtml(t.claimedByTag)}</span>`;
-  }
-  return `<span style="${base}background:var(--amber);">Ouvert · non pris en charge</span>`;
-}
+      <div class="panel">
+        <h3 class="panel-title">Options Incluses</h3>
+        <p class="panel-sub">Ces avantages font désormais partie de l'offre Standard.</p>
+        
+        <div style="display:flex; flex-direction:column; gap:12px; margin-top:10px;">
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+            <input type="checkbox" id="opt-priority" style="width:auto;">
+            <span><b>Réponse sous 24h</b> — Assistance technique garantie en moins de 24h.</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+            <input type="checkbox" id="opt-backups" style="width:auto;">
+            <span><b>Sauvegardes Automatiques MySQL</b> — Historique et sauvegardes quotidiennes.</span>
+          </label>
+        </div>
+      </div>
 
-async function loadOpenTickets() {
-  const tbody = document.getElementById('open-tickets-list');
-  if (!tbody) return;
+      <button class="btn-primary" id="save-sub-btn" style="margin-top:15px;">Enregistrer les informations d'abonnement</button>
+    </section>
 
-  let tickets;
-  try {
-    tickets = await api('GET', '/api/tickets/open');
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#e04b4b;padding:20px;">Erreur de chargement : ${escapeHtml(err.message)}</td></tr>`;
-    return;
-  }
+    <section class="view" id="view-open-tickets">
+      <div class="page-header">
+        <h1>Tickets Ouverts</h1>
+        <p>Consultez la liste de tous les tickets actuellement actifs.</p>
+      </div>
 
-  if (!tickets.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#888;padding:20px;">Aucun ticket ouvert pour l'instant.</td></tr>`;
-    return;
-  }
+      <div class="panel">
+        <div class="toolbar-row" style="margin-bottom: 16px;">
+          <h3 class="panel-title">Liste des tickets en cours</h3>
+          <button class="btn-ghost" id="refresh-open-tickets-btn">Actualiser</button>
+        </div>
+        
+        <div style="overflow-x: auto;">
+          <table class="tickets-table">
+            <thead>
+              <tr>
+                <th>ID / Salon</th>
+                <th>Utilisateur</th>
+                <th>Type</th>
+                <th>Statut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="open-tickets-list">
+              <tr>
+                <td colspan="5" style="text-align: center; color: #888; padding: 20px;">
+                  Chargement des tickets ouverts...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-  tbody.innerHTML = tickets
-    .map((t) => {
-      const discordLink =
-        t.guildId && t.channelId ? `https://discord.com/channels/${t.guildId}/${t.channelId}` : null;
-      return `
-        <tr>
-          <td class="mono">#${escapeHtml(t.id)}</td>
-          <td>${escapeHtml(t.userTag || 'inconnu')}</td>
-          <td>${escapeHtml(typeLabel(t.typeId))}</td>
-          <td>${ticketStatusBadge(t)}</td>
-          <td>${discordLink ? `<a class="btn-ghost" href="${discordLink}" target="_blank" rel="noopener">Ouvrir sur Discord</a>` : '—'}</td>
-        </tr>`;
-    })
-    .join('');
-}
+    <section class="view" id="view-livechat">
+      <div class="page-header">
+        <h1>Live Support Console</h1>
+        <p>Réponds en direct aux tickets Discord sans quitter le dashboard.</p>
+      </div>
 
-document.getElementById('refresh-open-tickets-btn')?.addEventListener('click', loadOpenTickets);
+      <div class="panel">
+        <div class="field-row">
+          <div class="field" style="flex:1;">
+            <label for="select-active-ticket">Ticket actif</label>
+            <select id="select-active-ticket">
+              <option value="">-- Sélectionner un ticket ouvert --</option>
+            </select>
+          </div>
+          <button class="btn-ghost" id="refresh-chat-btn" style="height:42px; align-self: flex-end;">Actualiser</button>
+        </div>
 
-// ── Accès admin ─────────────────────────────────────────────
-const ROLE_LABELS = { administrateur: 'Administrateur', moderateur: 'Modérateur', visiteur: 'Visiteur' };
+        <div class="live-chat-box">
+          <div class="chat-messages" id="chat-messages-container">
+            <p style="color:#777; text-align:center; margin:auto;">Sélectionne un ticket pour voir le fil de discussion...</p>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="live-chat-input" placeholder="Écris ton message ici..." style="flex:1;">
+            <button class="btn-primary" id="send-chat-btn">Envoyer</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
-async function loadAdmins() {
-  let data;
-  try {
-    data = await api('GET', '/api/admins');
-  } catch (err) {
-    return toast(err.message, true);
-  }
-  state.admins = data.admins.map((a) => a.id);
+    <section class="view" id="view-stats">
+      <div class="page-header">
+        <h1>Statistiques & Analytics</h1>
+        <p>Vue d'ensemble de l'activité des tickets et temps de réponse.</p>
+      </div>
 
-  const list = document.getElementById('admins-list');
-  if (!list) return;
+      <div class="stat-grid" id="stat-grid"></div>
 
-  const administrateurCount = data.admins.filter((a) => a.role === 'administrateur').length;
+      <div class="panel">
+        <h3 class="panel-title">Efficacité du Staff</h3>
+        <p class="panel-sub">Temps moyen de réponse : <b id="avg-response-time" style="color:var(--primary-color, #5865F2);">2 min 14s</b></p>
+      </div>
 
-  list.innerHTML = data.admins
-    .map((admin) => {
-      const isSelf = admin.id === data.selfId;
-      const isLastAdministrateur = admin.role === 'administrateur' && administrateurCount <= 1;
-      const roleOptions = Object.entries(ROLE_LABELS)
-        .map(
-          ([value, label]) =>
-            `<option value="${value}" ${admin.role === value ? 'selected' : ''}>${label}</option>`
-        )
-        .join('');
-      return `
-      <div class="admin-row">
-        <span class="mono">${escapeHtml(admin.id)}</span>
-        ${isSelf ? '<span class="role-chip">Toi</span>' : ''}
-        <select class="admin-role-select" data-id="${escapeHtml(admin.id)}" ${isLastAdministrateur ? 'disabled title="Dernier administrateur : rôle verrouillé"' : ''}>
-          ${roleOptions}
-        </select>
-        <button class="btn-ghost admin-remove-btn" data-id="${escapeHtml(admin.id)}" ${data.admins.length <= 1 || isLastAdministrateur ? 'disabled' : ''}>Retirer</button>
-      </div>`;
-    })
-    .join('');
+      <div class="panel">
+        <div class="toolbar-row" style="margin-bottom:16px;">
+          <div>
+            <h3 class="panel-title">Répartition par type</h3>
+            <p class="panel-sub" style="margin:0;">Nombre de tickets créés, tous statuts confondus.</p>
+          </div>
+          <button class="btn-ghost" id="export-csv-btn" style="display:inline-flex; align-items:center; gap:8px;">
+            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exporter en CSV
+          </button>
+        </div>
+        <div id="stat-by-type"></div>
+      </div>
 
-  list.querySelectorAll('.admin-role-select').forEach((select) => {
-    select.addEventListener('change', async () => {
-      const previousValue = select.dataset.currentRole || select.value;
-      try {
-        await api('PATCH', `/api/admins/${select.dataset.id}/role`, { role: select.value });
-        toast('Rôle mis à jour.');
-        loadAdmins();
-      } catch (err) {
-        toast(err.message, true);
-        select.value = previousValue;
-      }
-    });
-    select.dataset.currentRole = select.value;
-  });
+      <div class="panel">
+        <h3 class="panel-title">Activité récente</h3>
+        <p class="panel-sub">Les 8 derniers tickets créés ou fermés.</p>
+        <div id="stat-recent"></div>
+      </div>
+    </section>
 
-  list.querySelectorAll('.admin-remove-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm("Retirer l'accès de cet administrateur ?")) return;
-      try {
-        await api('DELETE', `/api/admins/${btn.dataset.id}`);
-        toast('Administrateur retiré.');
-        loadAdmins();
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
-  });
-}
+    <section class="view" id="view-connection">
+      <div class="page-header">
+        <h1>Connexion bot</h1>
+        <p>Les tokens des bots Discord (Developer Portal → Bot → Reset Token).</p>
+      </div>
 
-document.getElementById('add-admin-btn')?.addEventListener('click', async () => {
-  const input = document.getElementById('input-new-admin');
-  const roleSelect = document.getElementById('input-new-admin-role');
-  const id = input.value.trim();
-  if (!/^\d{15,25}$/.test(id)) return toast('ID Discord invalide.', true);
-  try {
-    await api('POST', '/api/admins', { discordId: id, role: roleSelect ? roleSelect.value : 'administrateur' });
-    input.value = '';
-    toast('Administrateur ajouté.');
-    loadAdmins();
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
+      <div class="panel">
+        <h3 class="panel-title">Bot principal (tickets & modmail)</h3>
+        <div class="field">
+          <label for="input-token">Token du bot principal</label>
+          <input type="password" id="input-token" class="mono" placeholder="Colle ton token ici">
+          <p class="field-hint">Le token affiché est masqué pour ta sécurité. Colle un nouveau token pour le remplacer.</p>
+        </div>
+        <button class="btn-primary" id="save-token-btn">Enregistrer et connecter</button>
+      </div>
+    </section>
 
-// ── LIVE CONSOLE & SUPPORT DIRECT ─────────────────────────
-window.activeTicketsData = {};
+    <section class="view" id="view-general">
+      <div class="page-header">
+        <h1>Configuration générale</h1>
+        <p>Où le panel est envoyé, et sur quel serveur les tickets sont créés.</p>
+      </div>
 
-async function loadTickets() {
-  const ticketSelect = document.getElementById('select-active-ticket');
-  if (!ticketSelect) return;
+      <details class="settings-accordion" open>
+        <summary>
+          <span class="accordion-summary-left">
+            <span class="accordion-icon">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+            </span>
+            <span class="accordion-title-block">
+              <span class="accordion-title">Panel de tickets</span>
+              <span class="accordion-sub">Serveur, salon et apparence du message avec les boutons</span>
+            </span>
+          </span>
+          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </summary>
+        <div class="accordion-body">
+          <div class="field-row">
+            <div class="field">
+              <label for="select-panel-guild">Serveur</label>
+              <select id="select-panel-guild"></select>
+            </div>
+            <div class="field">
+              <label for="select-panel-channel">Salon</label>
+              <select id="select-panel-channel"></select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="input-panel-title">Titre du panel</label>
+            <input type="text" id="input-panel-title">
+          </div>
+          <div class="field">
+            <label for="input-panel-desc">Description du panel</label>
+            <textarea id="input-panel-desc"></textarea>
+          </div>
+          <div class="field">
+            <label for="input-panel-banner">Image bannière (URL, optionnel)</label>
+            <input type="url" id="input-panel-banner" placeholder="https://...">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="input-embed-color">Couleur des embeds</label>
+              <input type="text" id="input-embed-color" class="mono" placeholder="5865F2" maxlength="6">
+            </div>
+            <div class="field">
+              <label for="input-footer">Texte du pied de page</label>
+              <input type="text" id="input-footer">
+            </div>
+          </div>
+        </div>
+      </details>
 
-  const previousValue = ticketSelect.value;
+      <details class="settings-accordion">
+        <summary>
+          <span class="accordion-summary-left">
+            <span class="accordion-icon">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+            <span class="accordion-title-block">
+              <span class="accordion-title">Serveur staff</span>
+              <span class="accordion-sub">Où les salons de tickets sont créés par défaut</span>
+            </span>
+          </span>
+          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </summary>
+        <div class="accordion-body">
+          <div class="field-row">
+            <div class="field">
+              <label for="select-staff-guild">Serveur staff</label>
+              <select id="select-staff-guild"></select>
+            </div>
+            <div class="field">
+              <label for="select-staff-category">Catégorie des tickets par défaut (optionnel)</label>
+              <select id="select-staff-category"></select>
+            </div>
+          </div>
+        </div>
+      </details>
 
-  try {
-    const tickets = await api('GET', '/api/tickets/open');
+      <button class="btn-primary" id="save-general-btn" style="margin-top:8px;">Enregistrer la configuration générale</button>
+    </section>
 
-    ticketSelect.innerHTML = '<option value="">-- Sélectionner un ticket ouvert --</option>';
-    window.activeTicketsData = {};
+    <section class="view" id="view-types">
+      <div class="page-header">
+        <h1>Types de tickets</h1>
+        <p>Chaque type définit un bouton du panel, sa catégorie cible et les rôles staff autorisés.</p>
+      </div>
 
-    tickets.forEach((ticket) => {
-      window.activeTicketsData[ticket.id] = ticket;
-      const option = document.createElement('option');
-      option.value = ticket.id;
-      option.textContent = `#${ticket.id} — ${ticket.userTag || 'inconnu'} (${typeLabel(ticket.typeId)})`;
-      ticketSelect.appendChild(option);
-    });
+      <div class="toolbar-row">
+        <div></div>
+        <button class="btn-primary" id="add-type-btn" style="display:inline-flex; align-items:center; gap:8px;">
+          <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nouveau type
+        </button>
+      </div>
 
-    if ([...ticketSelect.options].some((o) => o.value === previousValue)) {
-      ticketSelect.value = previousValue;
-    }
-  } catch (err) {
-    console.error('Erreur de connexion au bot :', err);
-    toast(err.message, true);
-  }
-}
+      <div id="types-list"></div>
+    </section>
 
-async function renderMessages(ticketId) {
-  const chatMessages = document.getElementById('chat-messages-container');
-  if (!chatMessages) return;
+    <section class="view" id="view-access">
+      <div class="page-header">
+        <h1>Accès admin</h1>
+        <p>Comptes Discord autorisés à se connecter à ce dashboard.</p>
+      </div>
 
-  if (!ticketId) {
-    chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Sélectionne un ticket pour voir le fil de discussion...</p>';
-    return;
-  }
+      <div class="panel">
+        <h3 class="panel-title">Ajouter un administrateur</h3>
+        <p class="panel-sub">Récupère l'ID Discord de la personne (mode développeur → clic droit sur son profil → "Copier l'ID").</p>
+        <div class="field-row" style="align-items:flex-end;">
+          <div class="field" style="margin-bottom:0;">
+            <label for="input-new-admin">ID Discord</label>
+            <input type="text" id="input-new-admin" class="mono" placeholder="123456789012345678">
+          </div>
+          <button class="btn-primary" id="add-admin-btn" style="height:42px;">Ajouter</button>
+        </div>
+      </div>
 
-  chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Chargement…</p>';
+      <div class="panel">
+        <h3 class="panel-title">Administrateurs actuels</h3>
+        <div id="admins-list"></div>
+      </div>
+    </section>
 
-  let data;
-  try {
-    data = await api('GET', `/api/tickets/${encodeURIComponent(ticketId)}/messages`);
-  } catch (err) {
-    chatMessages.innerHTML = `<p style="color:#e04b4b; text-align:center; margin:auto;">${escapeHtml(err.message)}</p>`;
-    return;
-  }
+    <section class="view" id="view-parametres">
+      <div class="page-header">
+        <h1>Paramètres</h1>
+        <p>Gère ton compte (nom d'utilisateur, photo de profil) et l'apparence de ton dashboard.</p>
+      </div>
 
-  chatMessages.innerHTML = '';
+      <div class="panel">
+        <h3 class="panel-title">Photo de profil</h3>
+        <p class="panel-sub">Formats acceptés : PNG, JPG, GIF, WEBP — 2 Mo maximum.</p>
+        <div style="display:flex; align-items:center; gap:20px; margin-top:14px; flex-wrap:wrap;">
+          <img id="settings-avatar-preview" class="user-avatar" style="width:84px; height:84px; border-radius:50%; object-fit:cover;" alt="Photo de profil">
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <input type="file" id="settings-avatar-input" accept="image/png,image/jpeg,image/gif,image/webp">
+            <div style="display:flex; gap:10px;">
+              <button class="btn-primary" id="settings-avatar-save" disabled>Enregistrer la photo</button>
+              <button class="btn-ghost" id="settings-avatar-cancel" disabled>Annuler</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  if (!data.messages.length) {
-    chatMessages.innerHTML = '<p style="color:#777; text-align:center; margin:auto;">Aucun message pour l\'instant.</p>';
-    return;
-  }
+      <div class="panel">
+        <h3 class="panel-title">Compte</h3>
+        <div class="field">
+          <label>Nom d'utilisateur</label>
+          <input type="text" id="settings-username" class="mono" readonly>
+        </div>
+      </div>
 
-  data.messages.forEach((msg) => {
-    const msgDiv = document.createElement('div');
-    msgDiv.style.padding = '8px 12px';
-    msgDiv.style.borderRadius = '6px';
-    msgDiv.style.marginBottom = '6px';
-    msgDiv.style.maxWidth = '80%';
-    msgDiv.style.fontSize = '13px';
+      <div class="panel">
+        <h3 class="panel-title">Effets de Transparence (Glassmorphism)</h3>
+        <div class="field">
+          <label for="range-blur">Flou d'arrière-plan (Blur : <span id="blur-val">10</span>px)</label>
+          <input type="range" id="range-blur" min="0" max="30" value="10">
+        </div>
+        <div class="field">
+          <label for="range-opacity">Opacité des panneaux (<span id="opacity-val">80</span>%)</label>
+          <input type="range" id="range-opacity" min="20" max="100" value="80">
+        </div>
+      </div>
 
-    if (msg.from === 'staff') {
-      msgDiv.style.background = 'rgba(88, 101, 242, 0.2)';
-      msgDiv.style.borderLeft = '3px solid #5865f2';
-      msgDiv.style.alignSelf = 'flex-end';
-    } else if (msg.from === 'user') {
-      msgDiv.style.background = 'rgba(87, 242, 135, 0.12)';
-      msgDiv.style.borderLeft = '3px solid #57f287';
-      msgDiv.style.alignSelf = 'flex-start';
-    } else {
-      msgDiv.style.background = 'rgba(255, 255, 255, 0.06)';
-      msgDiv.style.borderLeft = '3px solid #666';
-      msgDiv.style.alignSelf = 'center';
-      msgDiv.style.fontStyle = 'italic';
-      msgDiv.style.opacity = '0.8';
-    }
+      <div class="panel">
+        <h3 class="panel-title">Fond d'écran</h3>
+        <p class="panel-sub">Mets une image en fond, ou choisis simplement une couleur si tu ne veux pas mettre de photo.</p>
+        <div class="field">
+          <label for="input-wallpaper-url">URL de l'image</label>
+          <input type="url" id="input-wallpaper-url" placeholder="https://exemple.com/image.png">
+        </div>
+        <div class="field">
+          <label for="input-wallpaper-file">Ou importer une image locale</label>
+          <input type="file" id="input-wallpaper-file" accept="image/*">
+        </div>
+        <div class="field">
+          <label>Aperçu</label>
+          <div id="wallpaper-preview" style="width: 100%; height: 140px; border-radius: 8px; border: 1px dashed var(--border-color, #ccc); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: #888;">
+            Aucun fond personnalisé
+          </div>
+        </div>
 
-    msgDiv.innerHTML = `<strong>${escapeHtml(msg.sender)}</strong> <span style="font-size:10px; color:#aaa; margin-left:6px;">${escapeHtml(msg.time)}</span><br>${escapeHtml(msg.text)}`;
-    chatMessages.appendChild(msgDiv);
-  });
+        <div style="display:flex; align-items:center; gap:12px; margin: 18px 0;">
+          <div style="flex:1; height:1px; background: var(--border-color, rgba(255,255,255,0.1));"></div>
+          <span style="font-size:12px; color:#888; text-transform:uppercase;">Pas envie de mettre une photo ?</span>
+          <div style="flex:1; height:1px; background: var(--border-color, rgba(255,255,255,0.1));"></div>
+        </div>
 
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+        <div class="field">
+          <label for="input-bg-color">Couleur de fond unie</label>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <input type="color" id="input-bg-color" value="#0b0714" style="width:52px; height:42px; padding:2px; border-radius:8px; border:1px solid var(--border-color, #333); background:transparent; cursor:pointer;">
+            <input type="text" id="input-bg-color-hex" class="mono" placeholder="#0b0714" style="max-width:140px;">
+            <button class="btn-ghost" id="clear-bg-color-btn" type="button">Retirer la couleur</button>
+          </div>
+          <p class="field-hint">Choisis une couleur unie pour le fond du dashboard à la place d'une image. Elle remplace le fond d'écran tant qu'aucune image n'est définie.</p>
+        </div>
+      </div>
 
-async function sendMessage() {
-  const ticketSelect = document.getElementById('select-active-ticket');
-  const chatInput = document.getElementById('live-chat-input');
+      <div class="panel">
+        <h3 class="panel-title">Notifications Sonores</h3>
+        <div class="field-row" style="align-items:center;">
+          <label for="toggle-sound">Activer le son à l'arrivée d'un nouveau ticket</label>
+          <input type="checkbox" id="toggle-sound" style="width:auto;">
+        </div>
+      </div>
 
-  const activeTicketId = ticketSelect?.value;
-  const text = chatInput?.value.trim();
+      <div style="display: flex; gap: 10px; margin-top: 16px;">
+        <button class="btn-primary" id="save-theme-btn">Appliquer les modifications</button>
+        <button class="btn-ghost" id="reset-theme-btn">Réinitialiser par défaut</button>
+      </div>
+    </section>
 
-  if (!activeTicketId || !text) return;
+    <section class="view" id="view-changelog">
+      <div class="page-header">
+        <h1>Patch Notes & Mises à jour</h1>
+        <p>Découvre l'historique des nouvelles fonctionnalités, améliorations et correctifs.</p>
+      </div>
 
-  try {
-    await api('POST', `/api/tickets/${encodeURIComponent(activeTicketId)}/reply`, { message: text });
-    chatInput.value = '';
-    await renderMessages(activeTicketId);
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+      <div class="panel">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 class="panel-title">Version 2.7.0</h3>
+          <span class="field-hint">Dernière mise à jour</span>
+        </div>
+        <ul class="changelog-list">
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Bot Status FiveM : affiche en direct le nombre de joueurs et l'état du serveur (via code CFX) dans un salon vocal et/ou un embed, avec un second bot Discord dédié.</li>
+          <li><span class="changelog-tag tag-feat">Nouveau</span> "Connexion bot" gère maintenant deux tokens distincts : bot principal (tickets/modmail) et bot status (secondaire).</li>
+        </ul>
+      </div>
 
-// ── STUDIO, THÈMES & FOND D'ÉCRAN ─────────────────────────
-function applyThemeConfig(config) {
-  const previewBox = document.getElementById('wallpaper-preview');
-  const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
-  const bgColorInput = document.getElementById('input-bg-color');
-  const bgColorHexInput = document.getElementById('input-bg-color-hex');
-  const blurRange = document.getElementById('range-blur');
-  const blurVal = document.getElementById('blur-val');
-  const opacityRange = document.getElementById('range-opacity');
-  const opacityVal = document.getElementById('opacity-val');
+      <div class="panel">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 class="panel-title">Version 2.6.0</h3>
+        </div>
+        <ul class="changelog-list">
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Moyens de paiement Revolut & PayPal dans "Gestion & Abonnement", avec renouvellement automatique activable par moyen de paiement.</li>
+          <li><span class="changelog-tag tag-fix">Fix</span> "Republier le panel" affichait un succès même quand rien n'était envoyé (bot hors ligne, salon non configuré ou permissions manquantes) — le message d'erreur réel s'affiche désormais.</li>
+          <li><span class="changelog-tag tag-fix">Fix</span> L'onglet "Bannis FiveM" et la config FiveM n'étaient reliés à aucun script côté dashboard et restaient inertes — corrigé.</li>
+        </ul>
+      </div>
 
-  if (config.wallpaper) {
-    document.body.style.backgroundImage = `url('${config.wallpaper}')`;
-    document.body.style.backgroundSize = 'cover';
-    document.body.style.backgroundPosition = 'center';
-    document.body.style.backgroundAttachment = 'fixed';
+      <div class="panel">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 class="panel-title">Version 2.5.0</h3>
+        </div>
+        <ul class="changelog-list">
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Onglet "Gestion & Abonnement" pour administrer les identifiants d'acheteurs.</li>
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Intégration des catégories personnalisées par type de ticket.</li>
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Messages de bienvenue personnalisés avec variables dynamiques (ex: <code>{user}</code>).</li>
+          <li><span class="changelog-tag tag-imp">Amélioration</span> Refonte graphique du Live Console & Support direct.</li>
+          <li><span class="changelog-tag tag-fix">Fix</span> Correction d'un bug de chargement lors de la sélection des rôles staff.</li>
+        </ul>
+      </div>
 
-    if (previewBox) {
-      previewBox.style.backgroundImage = `url('${config.wallpaper}')`;
-      previewBox.textContent = '';
-    }
-    if (wallpaperUrlInput) wallpaperUrlInput.value = config.wallpaper;
-  } else if (config.bgColor) {
-    // Pas d'image : on applique une couleur unie à la place (pour ceux qui ne veulent pas de photo).
-    document.body.style.backgroundImage = 'none';
-    document.body.style.backgroundColor = config.bgColor;
-    if (bgColorInput) bgColorInput.value = config.bgColor;
-    if (bgColorHexInput) bgColorHexInput.value = config.bgColor;
-  }
+      <div class="panel">
+        <h3 class="panel-title">Version 2.3.0</h3>
+        <ul class="changelog-list">
+          <li><span class="changelog-tag tag-feat">Nouveau</span> Studio & Customisation avec mode Glassmorphism.</li>
+          <li><span class="changelog-tag tag-imp">Amélioration</span> Exportation des métriques et tickets en CSV.</li>
+        </ul>
+      </div>
+    </section>
 
-  if (config.blur !== undefined) {
-    if (blurRange) blurRange.value = config.blur;
-    if (blurVal) blurVal.textContent = config.blur;
-    document.querySelectorAll('.panel, .sidebar').forEach((el) => {
-      el.style.backdropFilter = `blur(${config.blur}px)`;
-    });
-  }
+  </main>
+</div>
 
-  if (config.opacity !== undefined) {
-    if (opacityRange) opacityRange.value = config.opacity;
-    if (opacityVal) opacityVal.textContent = config.opacity;
-    const opacityHex = Math.round((config.opacity / 100) * 255).toString(16).padStart(2, '0');
-    document.querySelectorAll('.panel').forEach((el) => {
-      el.style.backgroundColor = `#18191c${opacityHex}`;
-    });
-  }
-}
+<div class="modal-backdrop" id="type-modal-backdrop">
+  <div class="modal">
+    <h2 id="type-modal-title">Nouveau type de ticket</h2>
+    <input type="hidden" id="type-original-id">
 
-// ── Accordéon "Configuration générale" / "Connexion bot" (style liste Discord) ──────────
-function initGeneralAccordion() {
-  ['#view-general', '#view-connection'].forEach((viewSelector) => {
-    const accordions = [...document.querySelectorAll(`${viewSelector} .settings-accordion`)];
-    if (!accordions.length) return;
+    <div class="field-row">
+      <div class="field" style="max-width:90px;">
+        <label for="type-emoji">Icône</label>
+        <input type="text" id="type-emoji" maxlength="60" placeholder="🎫 ou <:nom:1234567890>">
+      </div>
+      <div class="field">
+        <label for="type-label">Nom</label>
+        <input type="text" id="type-label" placeholder="Support">
+      </div>
+    </div>
 
-    accordions.forEach((acc) => {
-      acc.addEventListener('toggle', () => {
-        if (!acc.open) return;
-        // Un seul panneau ouvert à la fois, comme une liste de réglages Discord.
-        accordions.forEach((other) => {
-          if (other !== acc) other.open = false;
-        });
-      });
-    });
-  });
-}
+    <div class="field">
+      <label for="type-id">Identifiant technique</label>
+      <input type="text" id="type-id" class="mono" placeholder="support">
+      <p class="field-hint">Minuscules, sans espaces. Ne pas modifier après création si des tickets existent.</p>
+    </div>
 
-// ── INITIALISATION COMPLÈTE AU DOM ────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  initNavigation();
-  initGeneralAccordion();
-  initProfileSettings();
+    <div class="field">
+      <label for="type-desc">Description</label>
+      <textarea id="type-desc" placeholder="Problème technique ou aide générale"></textarea>
+    </div>
 
-  // Live Console Events
-  const ticketSelect = document.getElementById('select-active-ticket');
-  const chatInput = document.getElementById('live-chat-input');
-  const sendBtn = document.getElementById('send-chat-btn');
-  const refreshChatBtn = document.getElementById('refresh-chat-btn');
+    <div class="field">
+      <label for="type-color">Couleur (hex sans #)</label>
+      <input type="text" id="type-color" class="mono" maxlength="6" placeholder="5865F2">
+    </div>
 
-  ticketSelect?.addEventListener('change', (e) => renderMessages(e.target.value));
-  sendBtn?.addEventListener('click', sendMessage);
-  chatInput?.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-  });
-  refreshChatBtn?.addEventListener('click', () => {
-    loadTickets();
-    if (ticketSelect?.value) renderMessages(ticketSelect.value);
-  });
+    <div class="field">
+      <label for="type-category">Catégorie Discord spécifique (Optionnel)</label>
+      <select id="type-category">
+        <option value="">Utiliser la catégorie par défaut (Globale)</option>
+      </select>
+      <p class="field-hint">Laisse vide pour utiliser la catégorie configurée dans "Configuration générale".</p>
+    </div>
+      
+    <div class="field">
+      <label for="type-welcome-msg">Message de bienvenue personnalisé</label>
+      <textarea id="type-welcome-msg" rows="3" placeholder="Bienvenue {user} ! Un membre de l'équipe {role} va prendre en charge ton ticket."></textarea>
+      <p class="field-hint">Variables disponibles : <code>{user}</code> (mentionne l'utilisateur), <code>{server}</code> (nom du serveur).</p>
+    </div>
 
-  // Theme Controls
-  const blurRange = document.getElementById('range-blur');
-  const opacityRange = document.getElementById('range-opacity');
-  const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
-  const wallpaperFileInput = document.getElementById('input-wallpaper-file');
-  const previewBox = document.getElementById('wallpaper-preview');
-  const bgColorInput = document.getElementById('input-bg-color');
-  const bgColorHexInput = document.getElementById('input-bg-color-hex');
-  const clearBgColorBtn = document.getElementById('clear-bg-color-btn');
+    <div class="field">
+      <label>Rôles staff autorisés</label>
+      <div class="roles-picker" id="type-roles-picker"></div>
+      <p class="field-hint">Sélectionne le serveur staff dans "Configuration générale" pour voir les rôles disponibles.</p>
+    </div>
 
-  // Choisir une couleur unie retire l'image de fond (les deux sont mutuellement exclusifs).
-  bgColorInput?.addEventListener('input', (e) => {
-    const color = e.target.value;
-    if (bgColorHexInput) bgColorHexInput.value = color;
-    document.body.style.backgroundImage = 'none';
-    document.body.style.backgroundColor = color;
-  });
+    <div class="modal-actions">
+      <button class="btn-ghost" id="type-cancel-btn">Annuler</button>
+      <button class="btn-danger" id="type-delete-btn" style="display:none;">Supprimer</button>
+      <button class="btn-primary" id="type-save-btn">Enregistrer</button>
+    </div>
+  </div>
+</div>
 
-  bgColorHexInput?.addEventListener('change', (e) => {
-    const color = e.target.value.trim();
-    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) return;
-    if (bgColorInput) bgColorInput.value = color;
-    document.body.style.backgroundImage = 'none';
-    document.body.style.backgroundColor = color;
-  });
+<div class="toast" id="toast"></div>
 
-  clearBgColorBtn?.addEventListener('click', () => {
-    if (bgColorHexInput) bgColorHexInput.value = '';
-    document.body.style.backgroundColor = '';
-    document.body.style.backgroundImage = '';
-  });
-
-  blurRange?.addEventListener('input', (e) => {
-    const val = e.target.value;
-    const blurVal = document.getElementById('blur-val');
-    if (blurVal) blurVal.textContent = val;
-    document.querySelectorAll('.panel, .sidebar').forEach((el) => {
-      el.style.backdropFilter = `blur(${val}px)`;
-    });
-  });
-
-  opacityRange?.addEventListener('input', (e) => {
-    const val = e.target.value;
-    const opacityVal = document.getElementById('opacity-val');
-    if (opacityVal) opacityVal.textContent = val;
-    const opacityHex = Math.round((val / 100) * 255).toString(16).padStart(2, '0');
-    document.querySelectorAll('.panel').forEach((el) => {
-      el.style.backgroundColor = `#18191c${opacityHex}`;
-    });
-  });
-
-  wallpaperUrlInput?.addEventListener('input', (e) => {
-    const url = e.target.value.trim();
-    if (url && previewBox) {
-      previewBox.style.backgroundImage = `url('${url}')`;
-      previewBox.textContent = '';
-    }
-  });
-
-  wallpaperFileInput?.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target.result;
-        if (previewBox) {
-          previewBox.style.backgroundImage = `url('${result}')`;
-          previewBox.textContent = '';
-        }
-        if (wallpaperUrlInput) wallpaperUrlInput.value = result;
-      };
-      reader.readAsDataURL(file);
-    }
-  });
-
-  document.getElementById('save-theme-btn')?.addEventListener('click', () => {
-    const wallpaper = wallpaperUrlInput?.value || '';
-    const config = {
-      blur: blurRange?.value || 10,
-      opacity: opacityRange?.value || 80,
-      wallpaper,
-      // La couleur unie ne s'applique que si aucune image de fond n'est définie.
-      bgColor: !wallpaper ? (bgColorHexInput?.value || '') : '',
-    };
-    localStorage.setItem('dashboard_theme_config', JSON.stringify(config));
-    applyThemeConfig(config);
-    toast('Thème enregistré avec succès !');
-  });
-
-  document.getElementById('reset-theme-btn')?.addEventListener('click', () => {
-    localStorage.removeItem('dashboard_theme_config');
-    location.reload();
-  });
-
-  // Restauration du thème sauvegardé
-  const savedTheme = localStorage.getItem('dashboard_theme_config');
-  if (savedTheme) {
-    try {
-      applyThemeConfig(JSON.parse(savedTheme));
-    } catch {}
-  }
-});
-
-// ── Démarrage Système ──────────────────────────────────────
-(async function init() {
-  await loadMe();
-  await refreshStatus();
-  await loadSettings();
-  await loadGuilds();
-
-  setInterval(refreshStatus, 5000);
-})();
+<script src="/assets/js/dashboard.js"></script>
+</body>
+</html>
