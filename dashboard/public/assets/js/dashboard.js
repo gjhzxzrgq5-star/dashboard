@@ -108,8 +108,6 @@ const VIEW_ROLES = {
   stats: ['administrateur', 'moderateur', 'visiteur'],
   connection: ['administrateur'],
   general: ['administrateur'],
-  fivembans: ['administrateur', 'moderateur', 'visiteur'],
-  customization: ['administrateur'],
   types: ['administrateur'],
   access: ['administrateur'],
   parametres: ['administrateur', 'moderateur', 'visiteur'],
@@ -1138,6 +1136,8 @@ document.getElementById('save-status-bot-btn')?.addEventListener('click', async 
 function applyThemeConfig(config) {
   const previewBox = document.getElementById('wallpaper-preview');
   const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
+  const bgColorInput = document.getElementById('input-bg-color');
+  const bgColorHexInput = document.getElementById('input-bg-color-hex');
   const blurRange = document.getElementById('range-blur');
   const blurVal = document.getElementById('blur-val');
   const opacityRange = document.getElementById('range-opacity');
@@ -1154,6 +1154,12 @@ function applyThemeConfig(config) {
       previewBox.textContent = '';
     }
     if (wallpaperUrlInput) wallpaperUrlInput.value = config.wallpaper;
+  } else if (config.bgColor) {
+    // Pas d'image : on applique une couleur unie à la place (pour ceux qui ne veulent pas de photo).
+    document.body.style.backgroundImage = 'none';
+    document.body.style.backgroundColor = config.bgColor;
+    if (bgColorInput) bgColorInput.value = config.bgColor;
+    if (bgColorHexInput) bgColorHexInput.value = config.bgColor;
   }
 
   if (config.blur !== undefined) {
@@ -1174,17 +1180,19 @@ function applyThemeConfig(config) {
   }
 }
 
-// ── Accordéon "Configuration générale" (style liste Discord) ──────────
+// ── Accordéon "Configuration générale" / "Connexion bot" (style liste Discord) ──────────
 function initGeneralAccordion() {
-  const accordions = [...document.querySelectorAll('#view-general .settings-accordion')];
-  if (!accordions.length) return;
+  ['#view-general', '#view-connection'].forEach((viewSelector) => {
+    const accordions = [...document.querySelectorAll(`${viewSelector} .settings-accordion`)];
+    if (!accordions.length) return;
 
-  accordions.forEach((acc) => {
-    acc.addEventListener('toggle', () => {
-      if (!acc.open) return;
-      // Un seul panneau ouvert à la fois, comme une liste de réglages Discord.
-      accordions.forEach((other) => {
-        if (other !== acc) other.open = false;
+    accordions.forEach((acc) => {
+      acc.addEventListener('toggle', () => {
+        if (!acc.open) return;
+        // Un seul panneau ouvert à la fois, comme une liste de réglages Discord.
+        accordions.forEach((other) => {
+          if (other !== acc) other.open = false;
+        });
       });
     });
   });
@@ -1223,6 +1231,31 @@ document.addEventListener('DOMContentLoaded', () => {
   const wallpaperUrlInput = document.getElementById('input-wallpaper-url');
   const wallpaperFileInput = document.getElementById('input-wallpaper-file');
   const previewBox = document.getElementById('wallpaper-preview');
+  const bgColorInput = document.getElementById('input-bg-color');
+  const bgColorHexInput = document.getElementById('input-bg-color-hex');
+  const clearBgColorBtn = document.getElementById('clear-bg-color-btn');
+
+  // Choisir une couleur unie retire l'image de fond (les deux sont mutuellement exclusifs).
+  bgColorInput?.addEventListener('input', (e) => {
+    const color = e.target.value;
+    if (bgColorHexInput) bgColorHexInput.value = color;
+    document.body.style.backgroundImage = 'none';
+    document.body.style.backgroundColor = color;
+  });
+
+  bgColorHexInput?.addEventListener('change', (e) => {
+    const color = e.target.value.trim();
+    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) return;
+    if (bgColorInput) bgColorInput.value = color;
+    document.body.style.backgroundImage = 'none';
+    document.body.style.backgroundColor = color;
+  });
+
+  clearBgColorBtn?.addEventListener('click', () => {
+    if (bgColorHexInput) bgColorHexInput.value = '';
+    document.body.style.backgroundColor = '';
+    document.body.style.backgroundImage = '';
+  });
 
   blurRange?.addEventListener('input', (e) => {
     const val = e.target.value;
@@ -1268,10 +1301,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('save-theme-btn')?.addEventListener('click', () => {
+    const wallpaper = wallpaperUrlInput?.value || '';
     const config = {
       blur: blurRange?.value || 10,
       opacity: opacityRange?.value || 80,
-      wallpaper: wallpaperUrlInput?.value || '',
+      wallpaper,
+      // La couleur unie ne s'applique que si aucune image de fond n'est définie.
+      bgColor: !wallpaper ? (bgColorHexInput?.value || '') : '',
     };
     localStorage.setItem('dashboard_theme_config', JSON.stringify(config));
     applyThemeConfig(config);
