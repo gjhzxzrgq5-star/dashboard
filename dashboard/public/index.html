@@ -35,8 +35,9 @@
   /* ── Pricing ────────────────────────────────────────── */
   .pricing-section { max-width: 940px; margin: 0 auto; padding: 0 24px 80px; }
   .pricing-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+    display: flex; justify-content: center; gap: 24px;
   }
+  .pricing-grid .plan-card { width: 100%; max-width: 380px; }
   .plan-card {
     position: relative;
     background: var(--surface);
@@ -121,7 +122,6 @@
   }
 
   @media (max-width: 720px) {
-    .pricing-grid { grid-template-columns: 1fr; }
     .hero h1 { font-size: 30px; }
   }
 </style>
