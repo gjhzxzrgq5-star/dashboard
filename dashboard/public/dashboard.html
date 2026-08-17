@@ -279,14 +279,6 @@
       <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Configuration générale
     </div>
-    <div class="nav-item" data-view="fivembans">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-      Bannis FiveM
-    </div>
-    <div class="nav-item" data-view="customization">
-      <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 1 0 10 10"/></svg>
-      Studio & Thèmes
-    </div>
     <div class="nav-item" data-view="types">
       <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
       Types de tickets
@@ -375,9 +367,9 @@
           <div class="field" style="margin:0; min-width: 200px;">
             <label for="select-plan-type">Formule souscrite</label>
             <select id="select-plan-type">
-              <option value="free">Gratuit / Starter</option>
-              <option value="pro">Pro (Mensuel)</option>
-              <option value="enterprise">Entreprise / Premium</option>
+              <option value="none">Aucune offre active</option>
+              <option value="standard">Standard (2,50 € / mois)</option>
+              <option value="premium">Premium (5,50 € / mois)</option>
             </select>
           </div>
         </div>
@@ -581,16 +573,126 @@
         <button class="btn-primary" id="save-token-btn">Enregistrer et connecter</button>
       </div>
 
-      <div class="panel">
-        <h3 class="panel-title">Bot Status FiveM (secondaire)</h3>
-        <p class="panel-sub">Un second bot Discord dédié, uniquement utilisé pour afficher le statut en direct de ton serveur FiveM (joueurs en ligne, nom du salon vocal, embed). Doit être une application Discord distincte du bot principal ci-dessus.</p>
-        <div class="field">
-          <label for="input-status-token">Token du bot status</label>
-          <input type="password" id="input-status-token" class="mono" placeholder="Colle le token du second bot ici">
-          <p class="field-hint">Developer Portal → New Application → Bot → Reset Token. Pense à inviter ce bot sur ton serveur Discord staff avec les permissions "Gérer les salons" si tu utilises le mode "nom de salon vocal".</p>
+      <details class="settings-accordion" id="fivem-server-accordion">
+        <summary>
+          <span class="accordion-summary-left">
+            <span class="accordion-icon">🌐</span>
+            <span class="accordion-title-block">
+              <span class="accordion-title">Configuration Serveur FiveM</span>
+              <span class="accordion-sub">Lien de connexion directe de ton serveur FiveM</span>
+            </span>
+          </span>
+          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </summary>
+        <div class="accordion-body">
+          <div class="field-row" style="align-items:center;">
+            <label for="toggle-fivem" style="margin:0; font-weight: bold;">Activer l'intégration FiveM</label>
+            <input type="checkbox" id="toggle-fivem" style="width:auto;">
+          </div>
+
+          <div id="fivem-options-container">
+            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🌐 Connexion FiveM</legend>
+              <div class="field">
+                <label for="input-fivem-url">Lien de connexion au serveur FiveM</label>
+                <input type="url" id="input-fivem-url" class="mono" placeholder="https://cfx.re/join/xxxxxx ou cfx.re/join/xxxxxx">
+              </div>
+            </fieldset>
+
+            <button class="btn-primary" id="save-fivem-btn">Enregistrer la config FiveM</button>
+          </div>
         </div>
-        <button class="btn-primary" id="save-status-token-btn">Enregistrer et connecter le bot status</button>
-      </div>
+      </details>
+
+      <details class="settings-accordion" id="status-bot-accordion">
+        <summary>
+          <span class="accordion-summary-left">
+            <span class="accordion-icon">📡</span>
+            <span class="accordion-title-block">
+              <span class="accordion-title">Bot Status FiveM (statut en direct)</span>
+              <span class="accordion-sub">Joueurs en ligne via le code CFX, dans un salon vocal et/ou un embed</span>
+            </span>
+          </span>
+          <span id="status-bot-badge" class="accordion-badge" style="display:none;">Actif</span>
+          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </summary>
+        <div class="accordion-body">
+          <p class="panel-sub" style="margin:0;">Un second bot Discord dédié, uniquement utilisé pour afficher le statut en direct de ton serveur FiveM (joueurs en ligne, nom du salon vocal, embed). Doit être une application Discord distincte du bot principal.</p>
+
+          <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px;">
+            <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🔑 Token du bot status</legend>
+            <div class="field" style="margin-bottom:10px;">
+              <label for="input-status-token">Token du bot status</label>
+              <input type="password" id="input-status-token" class="mono" placeholder="Colle le token du second bot ici">
+              <p class="field-hint">Developer Portal → New Application → Bot → Reset Token. Pense à inviter ce bot sur ton serveur Discord staff avec les permissions "Gérer les salons" si tu utilises le mode "nom de salon vocal".</p>
+            </div>
+            <button class="btn-primary" id="save-status-token-btn">Enregistrer et connecter le bot status</button>
+          </fieldset>
+
+          <div class="field-row" style="align-items:center; margin-top:15px;">
+            <label for="toggle-status-bot" style="margin:0; font-weight: bold;">Activer le bot de statut FiveM</label>
+            <input type="checkbox" id="toggle-status-bot" style="width:auto;">
+          </div>
+
+          <div id="status-bot-options-container">
+            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📡 Serveur CFX suivi</legend>
+
+              <div class="field">
+                <label for="input-cfx-code">Code CFX ou adresse IP:PORT du serveur</label>
+                <input type="text" id="input-cfx-code" class="mono" placeholder="ex : abcd12, ou 51.83.12.34:30120">
+                <p class="field-hint">Code récupérable dans l'URL de connexion : cfx.re/join/<b>abcd12</b> (tu peux coller l'URL complète). Si le code est bloqué par la protection anti-bot de cfx.re, renseigne directement l'<b>IP:PORT</b> du serveur — plus fiable, ça ne passe pas par cfx.re.</p>
+              </div>
+
+              <div id="cfx-status-preview" class="cfx-preview-box">
+                <span class="cfx-dot" id="cfx-status-dot"></span>
+                <span id="cfx-status-text">Aucune donnée récupérée pour le moment.</span>
+              </div>
+
+              <button class="btn-ghost" id="test-cfx-btn" style="margin-top:12px;">Tester la connexion CFX</button>
+            </fieldset>
+
+            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📍 Affichage</legend>
+
+              <div class="field-row">
+                <div class="field">
+                  <label for="select-status-mode">Mode d'affichage</label>
+                  <select id="select-status-mode">
+                    <option value="voice-name">Nom de salon vocal (ex : "🟢 12/48 joueurs")</option>
+                    <option value="embed">Embed dans un salon textuel</option>
+                    <option value="both">Les deux</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="input-status-refresh">Intervalle de rafraîchissement (secondes)</label>
+                  <input type="number" id="input-status-refresh" min="30" step="10" placeholder="60">
+                  <p class="field-hint">Minimum 30s pour éviter le rate-limit Discord sur les renommages de salon.</p>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <div class="field">
+                  <label for="select-status-guild">Serveur Discord</label>
+                  <select id="select-status-guild"></select>
+                </div>
+                <div class="field">
+                  <label for="select-status-channel">Salon (vocal ou textuel selon le mode)</label>
+                  <select id="select-status-channel"></select>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="input-status-format">Format du nom de salon vocal</label>
+                <input type="text" id="input-status-format" class="mono" placeholder="🟢 {players}/{maxplayers} joueurs">
+                <p class="field-hint">Variables disponibles : <code>{players}</code>, <code>{maxplayers}</code>, <code>{hostname}</code>, <code>{status}</code>.</p>
+              </div>
+            </fieldset>
+
+            <button class="btn-primary" id="save-status-bot-btn">Enregistrer la config du bot status</button>
+          </div>
+        </div>
+      </details>
     </section>
 
     <section class="view" id="view-general">
@@ -675,168 +777,7 @@
         </div>
       </details>
 
-      <details class="settings-accordion">
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">🌐</span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Configuration Serveur FiveM</span>
-              <span class="accordion-sub">Lien de connexion directe de ton serveur FiveM</span>
-            </span>
-          </span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <div class="field-row" style="align-items:center;">
-            <label for="toggle-fivem" style="margin:0; font-weight: bold;">Activer l'intégration FiveM</label>
-            <input type="checkbox" id="toggle-fivem" style="width:auto;">
-          </div>
-
-          <div id="fivem-options-container">
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">🌐 Connexion FiveM</legend>
-              <div class="field">
-                <label for="input-fivem-url">Lien de connexion au serveur FiveM</label>
-                <input type="url" id="input-fivem-url" class="mono" placeholder="https://cfx.re/join/xxxxxx ou cfx.re/join/xxxxxx">
-              </div>
-            </fieldset>
-
-            <button class="btn-primary" id="save-fivem-btn">Enregistrer la config FiveM</button>
-          </div>
-        </div>
-      </details>
-
-      <details class="settings-accordion" id="status-bot-accordion">
-        <summary>
-          <span class="accordion-summary-left">
-            <span class="accordion-icon">📡</span>
-            <span class="accordion-title-block">
-              <span class="accordion-title">Bot Status FiveM (statut en direct)</span>
-              <span class="accordion-sub">Joueurs en ligne via le code CFX, dans un salon vocal et/ou un embed</span>
-            </span>
-          </span>
-          <span id="status-bot-badge" class="accordion-badge" style="display:none;">Actif</span>
-          <svg class="icon-svg accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </summary>
-        <div class="accordion-body">
-          <p class="panel-sub" style="margin:0;">Nécessite le token du bot secondaire renseigné dans "Connexion bot".</p>
-
-          <div class="field-row" style="align-items:center;">
-            <label for="toggle-status-bot" style="margin:0; font-weight: bold;">Activer le bot de statut FiveM</label>
-            <input type="checkbox" id="toggle-status-bot" style="width:auto;">
-          </div>
-
-          <div id="status-bot-options-container">
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📡 Serveur CFX suivi</legend>
-
-              <div class="field">
-                <label for="input-cfx-code">Code CFX ou adresse IP:PORT du serveur</label>
-                <input type="text" id="input-cfx-code" class="mono" placeholder="ex : abcd12, ou 51.83.12.34:30120">
-                <p class="field-hint">Code récupérable dans l'URL de connexion : cfx.re/join/<b>abcd12</b> (tu peux coller l'URL complète). Si le code est bloqué par la protection anti-bot de cfx.re, renseigne directement l'<b>IP:PORT</b> du serveur — plus fiable, ça ne passe pas par cfx.re.</p>
-              </div>
-
-              <div id="cfx-status-preview" class="cfx-preview-box">
-                <span class="cfx-dot" id="cfx-status-dot"></span>
-                <span id="cfx-status-text">Aucune donnée récupérée pour le moment.</span>
-              </div>
-
-              <button class="btn-ghost" id="test-cfx-btn" style="margin-top:12px;">Tester la connexion CFX</button>
-            </fieldset>
-
-            <fieldset style="border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-              <legend style="padding: 0 8px; font-weight: bold; color: var(--primary-color, #5865F2);">📍 Affichage</legend>
-
-              <div class="field-row">
-                <div class="field">
-                  <label for="select-status-mode">Mode d'affichage</label>
-                  <select id="select-status-mode">
-                    <option value="voice-name">Nom de salon vocal (ex : "🟢 12/48 joueurs")</option>
-                    <option value="embed">Embed dans un salon textuel</option>
-                    <option value="both">Les deux</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="input-status-refresh">Intervalle de rafraîchissement (secondes)</label>
-                  <input type="number" id="input-status-refresh" min="30" step="10" placeholder="60">
-                  <p class="field-hint">Minimum 30s pour éviter le rate-limit Discord sur les renommages de salon.</p>
-                </div>
-              </div>
-
-              <div class="field-row">
-                <div class="field">
-                  <label for="select-status-guild">Serveur Discord</label>
-                  <select id="select-status-guild"></select>
-                </div>
-                <div class="field">
-                  <label for="select-status-channel">Salon (vocal ou textuel selon le mode)</label>
-                  <select id="select-status-channel"></select>
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="input-status-format">Format du nom de salon vocal</label>
-                <input type="text" id="input-status-format" class="mono" placeholder="🟢 {players}/{maxplayers} joueurs">
-                <p class="field-hint">Variables disponibles : <code>{players}</code>, <code>{maxplayers}</code>, <code>{hostname}</code>, <code>{status}</code>.</p>
-              </div>
-            </fieldset>
-
-            <button class="btn-primary" id="save-status-bot-btn">Enregistrer la config du bot status</button>
-          </div>
-        </div>
-      </details>
-
       <button class="btn-primary" id="save-general-btn" style="margin-top:8px;">Enregistrer la configuration générale</button>
-    </section>
-
-    <section class="view" id="view-customization">
-      <div class="page-header">
-        <h1>Studio & Thèmes</h1>
-        <p>Gère l'apparence, l'effet de flou et les notifications de ton espace.</p>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Effets de Transparence (Glassmorphism)</h3>
-        <div class="field">
-          <label for="range-blur">Flou d'arrière-plan (Blur : <span id="blur-val">10</span>px)</label>
-          <input type="range" id="range-blur" min="0" max="30" value="10">
-        </div>
-        <div class="field">
-          <label for="range-opacity">Opacité des panneaux (<span id="opacity-val">80</span>%)</label>
-          <input type="range" id="range-opacity" min="20" max="100" value="80">
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Fond d'écran</h3>
-        <div class="field">
-          <label for="input-wallpaper-url">URL de l'image</label>
-          <input type="url" id="input-wallpaper-url" placeholder="https://exemple.com/image.png">
-        </div>
-        <div class="field">
-          <label for="input-wallpaper-file">Ou importer une image locale</label>
-          <input type="file" id="input-wallpaper-file" accept="image/*">
-        </div>
-        <div class="field">
-          <label>Aperçu</label>
-          <div id="wallpaper-preview" style="width: 100%; height: 140px; border-radius: 8px; border: 1px dashed var(--border-color, #ccc); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: #888;">
-            Aucun fond personnalisé
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 class="panel-title">Notifications Sonores</h3>
-        <div class="field-row" style="align-items:center;">
-          <label for="toggle-sound">Activer le son à l'arrivée d'un nouveau ticket</label>
-          <input type="checkbox" id="toggle-sound" style="width:auto;">
-        </div>
-      </div>
-
-      <div style="display: flex; gap: 10px; margin-top: 16px;">
-        <button class="btn-primary" id="save-theme-btn">Appliquer les modifications</button>
-        <button class="btn-ghost" id="reset-theme-btn">Réinitialiser par défaut</button>
-      </div>
     </section>
 
     <section class="view" id="view-types">
@@ -880,28 +821,10 @@
       </div>
     </section>
 
-    <section class="view" id="view-fivembans">
-      <div class="page-header">
-        <h1>Bannis FiveM</h1>
-        <p>Liste des joueurs bannis sur le serveur FiveM configuré.</p>
-      </div>
-
-      <div class="panel" id="fivembans-panel">
-        <div class="toolbar-row">
-          <div>
-            <h3 class="panel-title" style="margin-bottom:0;">Liste des bannis</h3>
-            <p class="panel-sub" id="fivembans-server-info" style="margin:4px 0 0;"></p>
-          </div>
-          <button class="btn-ghost" id="refresh-fivembans-btn">Actualiser</button>
-        </div>
-        <div id="fivembans-list"></div>
-      </div>
-    </section>
-
     <section class="view" id="view-parametres">
       <div class="page-header">
         <h1>Paramètres</h1>
-        <p>Gère ton compte : nom d'utilisateur et photo de profil.</p>
+        <p>Gère ton compte (nom d'utilisateur, photo de profil) et l'apparence de ton dashboard.</p>
       </div>
 
       <div class="panel">
@@ -925,6 +848,66 @@
           <label>Nom d'utilisateur</label>
           <input type="text" id="settings-username" class="mono" readonly>
         </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Effets de Transparence (Glassmorphism)</h3>
+        <div class="field">
+          <label for="range-blur">Flou d'arrière-plan (Blur : <span id="blur-val">10</span>px)</label>
+          <input type="range" id="range-blur" min="0" max="30" value="10">
+        </div>
+        <div class="field">
+          <label for="range-opacity">Opacité des panneaux (<span id="opacity-val">80</span>%)</label>
+          <input type="range" id="range-opacity" min="20" max="100" value="80">
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Fond d'écran</h3>
+        <p class="panel-sub">Mets une image en fond, ou choisis simplement une couleur si tu ne veux pas mettre de photo.</p>
+        <div class="field">
+          <label for="input-wallpaper-url">URL de l'image</label>
+          <input type="url" id="input-wallpaper-url" placeholder="https://exemple.com/image.png">
+        </div>
+        <div class="field">
+          <label for="input-wallpaper-file">Ou importer une image locale</label>
+          <input type="file" id="input-wallpaper-file" accept="image/*">
+        </div>
+        <div class="field">
+          <label>Aperçu</label>
+          <div id="wallpaper-preview" style="width: 100%; height: 140px; border-radius: 8px; border: 1px dashed var(--border-color, #ccc); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: #888;">
+            Aucun fond personnalisé
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:12px; margin: 18px 0;">
+          <div style="flex:1; height:1px; background: var(--border-color, rgba(255,255,255,0.1));"></div>
+          <span style="font-size:12px; color:#888; text-transform:uppercase;">Pas envie de mettre une photo ?</span>
+          <div style="flex:1; height:1px; background: var(--border-color, rgba(255,255,255,0.1));"></div>
+        </div>
+
+        <div class="field">
+          <label for="input-bg-color">Couleur de fond unie</label>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <input type="color" id="input-bg-color" value="#0b0714" style="width:52px; height:42px; padding:2px; border-radius:8px; border:1px solid var(--border-color, #333); background:transparent; cursor:pointer;">
+            <input type="text" id="input-bg-color-hex" class="mono" placeholder="#0b0714" style="max-width:140px;">
+            <button class="btn-ghost" id="clear-bg-color-btn" type="button">Retirer la couleur</button>
+          </div>
+          <p class="field-hint">Choisis une couleur unie pour le fond du dashboard à la place d'une image. Elle remplace le fond d'écran tant qu'aucune image n'est définie.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Notifications Sonores</h3>
+        <div class="field-row" style="align-items:center;">
+          <label for="toggle-sound">Activer le son à l'arrivée d'un nouveau ticket</label>
+          <input type="checkbox" id="toggle-sound" style="width:auto;">
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 16px;">
+        <button class="btn-primary" id="save-theme-btn">Appliquer les modifications</button>
+        <button class="btn-ghost" id="reset-theme-btn">Réinitialiser par défaut</button>
       </div>
     </section>
 
