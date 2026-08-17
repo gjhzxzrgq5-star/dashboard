@@ -12,6 +12,7 @@ const { pool: db } = require('../lib/db');
 const { isValidEmoji } = require('../lib/config');
 const customerCodes = require('../lib/customerCodes');
 const { fetchServerStatus } = require('../lib/cfxApi');
+const { hashPassword, verifyPassword, validateUsername, validatePassword } = require('../lib/auth');
 
 const VIEWS_DIR = __dirname;
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -158,7 +159,7 @@ function mapTicketMessage(m) {
 function createDashboardServer() {
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json());
+  app.use(express.json({ limit: '2mb' })); // 2mb : marge pour les photos de profil en base64
   app.use(
     session({
       store: sessionStore,
@@ -267,6 +268,139 @@ function createDashboardServer() {
     return res.redirect('/accueil');
   });
 
+  // ── Comptes locaux : nom d'utilisateur + mot de passe + identifiant
+  // d'achat (remplace le formulaire de connexion par défaut). Le code
+  // d'achat sert à créer/relier l'espace (tenant) du client, exactement
+  // comme avant, mais l'identité de connexion n'est plus le compte
+  // Discord : c'est un identifiant interne "local:<id utilisateur>"
+  // stocké dans les mêmes colonnes que l'ancien discord_id, pour
+  // réutiliser tel quel tout le système d'admin/rôles existant.
+  app.get('/signup', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
+    res.type('html').send(readView('signup.html'));
+  });
+
+  app.post('/api/signup', async (req, res) => {
+    const { username: rawUsername, password: rawPassword, code } = req.body || {};
+
+    const usernameCheck = validateUsername(rawUsername);
+    if (!usernameCheck.ok) return res.status(400).json({ error: usernameCheck.error });
+    const passwordCheck = validatePassword(rawPassword);
+    if (!passwordCheck.ok) return res.status(400).json({ error: passwordCheck.error });
+    const username = usernameCheck.username;
+
+    try {
+      const check = await customerCodes.checkCode(code);
+      if (!check.valid) {
+        const messages = {
+          not_found: "Cet identifiant d'achat n'existe pas. Vérifie ta saisie.",
+          already_used: 'Cet identifiant a déjà été utilisé.',
+          empty: "Merci de saisir ton identifiant d'achat.",
+        };
+        return res.status(400).json({ error: messages[check.reason] || 'Identifiant invalide.' });
+      }
+
+      const [existing] = await db.query('SELECT id FROM users WHERE username = ?', [username]);
+      if (existing.length) {
+        return res.status(400).json({ error: "Ce nom d'utilisateur est déjà pris." });
+      }
+
+      const passwordHash = hashPassword(passwordCheck.password);
+      const [insertResult] = await db.query(
+        'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+        [username, passwordHash]
+      );
+      const dbUserId = insertResult.insertId;
+      const identity = `local:${dbUserId}`;
+
+      try {
+        const tenantId = await tenantManager.createTenantForDiscordUser(identity, username);
+
+        const redeemed = await customerCodes.redeemCode(code, identity, username);
+        if (!redeemed.ok) {
+          // Le code a été pris entre le check et le redeem (course) : on
+          // annule la création du compte/espace pour ne rien laisser de
+          // "gratuit" derrière un code invalide.
+          await db.query('DELETE FROM tenants WHERE id = ?', [tenantId]);
+          await db.query('DELETE FROM users WHERE id = ?', [dbUserId]);
+          return res.status(400).json({ error: 'Cet identifiant a déjà été utilisé.' });
+        }
+
+        const store = await tenantManager.getStore(tenantId);
+        if (redeemed.planType) {
+          store.setSubscription({ planType: redeemed.planType, active: true });
+        }
+        await db.query('UPDATE customer_codes SET tenant_id = ? WHERE code = ?', [tenantId, customerCodes.normalizeCode(code)]);
+        await db.query('UPDATE users SET discord_id = ?, tenant_id = ? WHERE id = ?', [identity, tenantId, dbUserId]);
+
+        req.session.discordUser = {
+          id: identity,
+          username,
+          handle: username,
+          avatar: `https://cdn.discordapp.com/embed/avatars/${dbUserId % 5}.png`,
+          dbId: dbUserId,
+        };
+        req.session.tenantId = tenantId;
+
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await db.query(
+          `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
+          [dbUserId, ip, req.headers['user-agent'] || '']
+        );
+
+        res.json({ ok: true });
+      } catch (err) {
+        await db.query('DELETE FROM users WHERE id = ?', [dbUserId]);
+        throw err;
+      }
+    } catch (err) {
+      console.error('Erreur création de compte:', err.message);
+      res.status(500).json({ error: 'Erreur serveur, réessaie dans un instant.' });
+    }
+  });
+
+  app.post('/api/login', async (req, res) => {
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+    if (!username || !password) {
+      return res.status(400).json({ error: "Nom d'utilisateur et mot de passe requis." });
+    }
+
+    try {
+      const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
+      const user = rows[0];
+      if (!user || !user.password_hash || !verifyPassword(password, user.password_hash)) {
+        return res.status(401).json({ error: "Nom d'utilisateur ou mot de passe incorrect." });
+      }
+
+      const tenantId = user.tenant_id || (await tenantManager.findTenantIdForDiscordUser(user.discord_id));
+      if (!tenantId) {
+        return res.status(400).json({ error: "Ce compte n'est relié à aucun espace." });
+      }
+
+      req.session.discordUser = {
+        id: user.discord_id,
+        username: user.username,
+        handle: user.username,
+        avatar: user.avatar_url || `https://cdn.discordapp.com/embed/avatars/${user.id % 5}.png`,
+        dbId: user.id,
+      };
+      req.session.tenantId = tenantId;
+
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      await db.query(
+        `INSERT INTO connection_logs (user_id, event_type, ip_address, user_agent) VALUES (?, 'LOGIN', ?, ?)`,
+        [user.id, ip, req.headers['user-agent'] || '']
+      );
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('Erreur connexion:', err.message);
+      res.status(500).json({ error: 'Erreur serveur, réessaie dans un instant.' });
+    }
+  });
+
   // ── Création d'un nouvel espace client (sa propre appli Discord) ──
   app.get('/setup', (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -332,7 +466,7 @@ function createDashboardServer() {
   app.get('/login', (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (req.session.discordUser && req.session.tenantId) return res.redirect('/dashboard');
-    res.type('html').send(renderLogin(null));
+    res.type('html').send(readView('login.html'));
   });
 
   app.get('/login/:slug', async (req, res) => {
@@ -508,6 +642,32 @@ function createDashboardServer() {
       admins: req.tenantStore.getAdminIds(),
       role: req.adminRole,
     });
+  });
+
+  // ── Paramètres du compte : photo de profil ─────────────────────
+  const MAX_AVATAR_DATA_URL_LENGTH = 1.5 * 1024 * 1024; // ~1.5 Mo en base64
+
+  api.post('/profile/avatar', async (req, res) => {
+    const avatar = String(req.body?.avatar || '');
+    if (!avatar) return res.status(400).json({ error: 'Aucune image fournie.' });
+    if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(avatar)) {
+      return res.status(400).json({ error: 'Format d\'image non supporté.' });
+    }
+    if (avatar.length > MAX_AVATAR_DATA_URL_LENGTH) {
+      return res.status(400).json({ error: 'Image trop lourde (2 Mo maximum).' });
+    }
+
+    const dbUserId = req.session.discordUser?.dbId;
+    if (!dbUserId) return res.status(400).json({ error: "Compte introuvable." });
+
+    try {
+      await db.query('UPDATE users SET avatar_url = ? WHERE id = ?', [avatar, dbUserId]);
+      req.session.discordUser.avatar = avatar;
+      res.json({ ok: true, avatar });
+    } catch (err) {
+      console.error('Erreur sauvegarde avatar:', err.message);
+      res.status(500).json({ error: 'Impossible d\'enregistrer la photo de profil.' });
+    }
   });
 
   api.get('/fivem/config', async (req, res) => {
