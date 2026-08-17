@@ -174,6 +174,48 @@ function createDashboardServer() {
     })
   );
 
+  // ── DEV ONLY : bypass de connexion pour tester le dashboard sans Discord ──
+  // Actif seulement si DEV_BYPASS_AUTH=true dans l'environnement (jamais en prod).
+  // Dès qu'une requête arrive sans session valide, on crée/réutilise un tenant
+  // de test et on connecte automatiquement un faux compte "dev" dessus.
+  if (process.env.DEV_BYPASS_AUTH === 'true') {
+    console.warn('⚠️  DEV_BYPASS_AUTH activé : la connexion Discord est court-circuitée. Ne JAMAIS activer ça en prod.');
+    const DEV_DISCORD_ID = process.env.DEV_DISCORD_ID || 'dev-000000000000000';
+
+    app.use(async (req, res, next) => {
+      if (req.session.discordUser && req.session.tenantId) return next();
+      try {
+        let tenantId = await tenantManager.findTenantIdForDiscordUser(DEV_DISCORD_ID);
+        if (!tenantId) {
+          tenantId = await tenantManager.createTenantForDiscordUser(DEV_DISCORD_ID, 'Tenant de test (dev)');
+        }
+
+        req.session.discordUser = {
+          id: DEV_DISCORD_ID,
+          username: 'Dev Tester',
+          handle: 'Dev Tester',
+          avatar: 'https://cdn.discordapp.com/embed/avatars/0.png',
+        };
+        req.session.tenantId = tenantId;
+
+        try {
+          await db.query(
+            `INSERT INTO users (discord_id, username, tenant_id) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE username = VALUES(username), tenant_id = VALUES(tenant_id)`,
+            [DEV_DISCORD_ID, 'Dev Tester', tenantId]
+          );
+          const [userRows] = await db.query('SELECT id FROM users WHERE discord_id = ?', [DEV_DISCORD_ID]);
+          if (userRows.length) req.session.discordUser.dbId = userRows[0].id;
+        } catch (sqlErr) {
+          console.error('DEV_BYPASS_AUTH: erreur upsert users:', sqlErr.message);
+        }
+      } catch (err) {
+        console.error('DEV_BYPASS_AUTH: impossible de créer/récupérer le tenant de test:', err.message);
+      }
+      next();
+    });
+  }
+
   app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
 
   app.get('/healthz', (req, res) => {
