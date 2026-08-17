@@ -238,6 +238,22 @@ document.getElementById('select-panel-guild')?.addEventListener('change', () => 
 document.getElementById('select-staff-guild')?.addEventListener('change', () => onStaffGuildChange(true));
 
 // ── Enregistrement token & config ─────────────────────────
+// Attend que le bot passe à 'online' (ou 'error') au lieu de miser sur un
+// délai fixe : la connexion à Discord peut prendre de 1 à plusieurs
+// secondes selon le nombre de serveurs/le réseau, un setTimeout unique de
+// 2.5s déclarait le bot "hors ligne" bien avant qu'il ait fini de se
+// connecter, ce qui donnait l'impression que ça restait bloqué.
+async function waitForBotOnline(timeoutMs = 20000, intervalMs = 1000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const s = await api('GET', '/api/status').catch(() => null);
+    if (s && s.status === 'online') return s;
+    if (s && s.status === 'error') return s;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return api('GET', '/api/status').catch(() => ({ status: 'connecting' }));
+}
+
 document.getElementById('save-token-btn')?.addEventListener('click', async () => {
   const token = document.getElementById('input-token').value.trim();
   if (!token) return toast('Colle un token avant de sauvegarder.', true);
@@ -245,19 +261,30 @@ document.getElementById('save-token-btn')?.addEventListener('click', async () =>
     await api('POST', '/api/settings/bot', { token });
     toast('Token enregistré, connexion en cours…');
     document.getElementById('input-token').value = '';
-    setTimeout(async () => {
-      await loadSettings();
-      await loadGuilds();
-      // Le bot vient (normalement) de se reconnecter : on tente de republier
-      // le panel et on remonte le vrai résultat, au lieu de laisser ça se
-      // passer silencieusement en tâche de fond sans aucun retour visible.
-      try {
-        await api('POST', '/api/bot/refresh-panel');
-        toast('Bot connecté, panel republié dans le salon configuré.');
-      } catch (err) {
-        toast(`Bot connecté, mais le panel n'a pas pu être envoyé : ${err.message}`, true);
-      }
-    }, 2500);
+
+    const finalStatus = await waitForBotOnline();
+    await loadSettings();
+    await loadGuilds();
+
+    if (finalStatus.status !== 'online') {
+      toast(
+        finalStatus.lastError
+          ? `La connexion du bot a échoué : ${finalStatus.lastError}`
+          : "Le bot met plus de temps que prévu à se connecter, vérifie son statut dans \"Vue d'ensemble\".",
+        true
+      );
+      return;
+    }
+
+    // Le bot vient de se connecter : on tente de republier le panel et on
+    // remonte le vrai résultat, au lieu de laisser ça se passer
+    // silencieusement en tâche de fond sans aucun retour visible.
+    try {
+      await api('POST', '/api/bot/refresh-panel');
+      toast('Bot connecté, panel republié dans le salon configuré.');
+    } catch (err) {
+      toast(`Bot connecté, mais le panel n'a pas pu être envoyé : ${err.message}`, true);
+    }
   } catch (err) {
     toast(err.message, true);
   }
