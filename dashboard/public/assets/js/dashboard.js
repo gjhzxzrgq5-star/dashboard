@@ -339,6 +339,26 @@ document.getElementById('restart-bot-btn')?.addEventListener('click', async () =
   }
 });
 
+document.getElementById('diagnose-bot-btn')?.addEventListener('click', async () => {
+  const out = document.getElementById('diagnose-result');
+  const btn = document.getElementById('diagnose-bot-btn');
+  if (out) {
+    out.style.display = 'block';
+    out.textContent = 'Diagnostic en cours (test token + réseau Discord)…';
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('GET', '/api/bot/diagnose');
+    const lines = r.steps.map((s) => `${s.ok ? '✅' : '❌'} ${s.step} (${s.ms}ms)\n   ${s.detail}`);
+    lines.push('', `→ ${r.verdict}`);
+    if (out) out.textContent = lines.join('\n');
+  } catch (err) {
+    if (out) out.textContent = `Erreur : ${err.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
 // ── Types de tickets ───────────────────────────────────────
 function roleNameById(id) {
   const r = state.staffRoles.find((r) => r.id === id);
