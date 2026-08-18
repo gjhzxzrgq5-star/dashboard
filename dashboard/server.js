@@ -846,6 +846,94 @@ function createDashboardServer() {
     res.json({ ok: true });
   });
 
+  // ── Diagnostic connexion Discord ────────────────────────────
+  // Isole la cause d'un blocage sur "connecting" : distingue un problème
+  // de TOKEN (REST échoue tout de suite avec 401) d'un problème RÉSEAU
+  // côté hébergeur (REST timeout/erreur alors que le token est valide,
+  // typique d'une sortie WebSocket bloquée vers gateway.discord.gg alors
+  // que les requêtes HTTPS classiques passent, ou l'inverse). Ne touche
+  // pas au client discord.js du tenant : requête HTTPS indépendante.
+  api.get('/bot/diagnose', requireRole('administrateur'), async (req, res) => {
+    const bot = req.tenantStore.getBot();
+    if (!bot.token) return res.status(400).json({ error: 'Aucun token enregistré.' });
+
+    const steps = [];
+    const started = Date.now();
+
+    try {
+      const t0 = Date.now();
+      const ctrl = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
+      const meRes = await fetch(`${DISCORD_API}/users/@me`, {
+        headers: { Authorization: `Bot ${bot.token}` },
+        signal: ctrl,
+      });
+      const ms = Date.now() - t0;
+      if (meRes.status === 401) {
+        steps.push({ step: 'REST /users/@me', ok: false, ms, detail: 'Token invalide ou révoqué (401). Régénère le token sur le Developer Portal et recolle-le en entier, sans espace.' });
+      } else if (!meRes.ok) {
+        steps.push({ step: 'REST /users/@me', ok: false, ms, detail: `HTTP ${meRes.status}` });
+      } else {
+        const me = await meRes.json();
+        steps.push({ step: 'REST /users/@me', ok: true, ms, detail: `Token valide, application "${me.username}". Les sorties HTTPS fonctionnent.` });
+      }
+    } catch (err) {
+      steps.push({
+        step: 'REST /users/@me',
+        ok: false,
+        ms: Date.now() - started,
+        detail: `Échec réseau (${err.message}). L'hébergeur bloque probablement les connexions HTTPS sortantes vers discord.com, ou coupe les requêtes longues.`,
+      });
+    }
+
+    try {
+      const t0 = Date.now();
+      const ctrl = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
+      const gwRes = await fetch(`${DISCORD_API}/gateway/bot`, {
+        headers: { Authorization: `Bot ${bot.token}` },
+        signal: ctrl,
+      });
+      const ms = Date.now() - t0;
+      if (!gwRes.ok) {
+        steps.push({ step: 'REST /gateway/bot', ok: false, ms, detail: `HTTP ${gwRes.status}` });
+      } else {
+        const gw = await gwRes.json();
+        steps.push({
+          step: 'REST /gateway/bot',
+          ok: true,
+          ms,
+          detail: `URL gateway obtenue (${gw.url}). Sessions restantes ce jour : ${gw.session_start_limit?.remaining ?? '?'}/${gw.session_start_limit?.total ?? '?'}.`,
+        });
+        if (gw.session_start_limit && gw.session_start_limit.remaining === 0) {
+          steps.push({
+            step: 'Session start limit',
+            ok: false,
+            ms: 0,
+            detail: `⚠️ Quota de connexions Discord épuisé pour aujourd'hui (reset dans ${Math.ceil((gw.session_start_limit.reset_after || 0) / 3600000)}h). C'est probablement la cause du blocage : Discord refuse silencieusement l'IDENTIFY tant que le quota n'est pas reset.`,
+          });
+        }
+      }
+    } catch (err) {
+      steps.push({
+        step: 'REST /gateway/bot',
+        ok: false,
+        ms: Date.now() - started,
+        detail: `Échec réseau (${err.message}).`,
+      });
+    }
+
+    const allRestOk = steps.filter((s) => s.step.startsWith('REST')).every((s) => s.ok);
+    let verdict;
+    if (!allRestOk) {
+      verdict = "Les requêtes REST (HTTPS classique) vers Discord échouent déjà. C'est un problème de token ou de réseau sortant côté hébergeur, PAS spécifique au WebSocket. Corrige ça d'abord.";
+    } else if (steps.some((s) => s.step === 'Session start limit')) {
+      verdict = 'Le token et le réseau HTTPS fonctionnent, mais le quota de connexions Discord est épuisé — attends le reset.';
+    } else {
+      verdict = "Le token est valide et les requêtes HTTPS passent. Si la connexion WebSocket (bot) reste bloquée malgré ça, c'est très probablement l'hébergeur qui bloque spécifiquement le trafic WebSocket (port 443 en mode 'upgrade') vers gateway.discord.gg, alors qu'il laisse passer le HTTPS classique. Active DEBUG_DISCORD=true dans les variables d'environnement et regarde les logs pour voir où ça bloque exactement.";
+    }
+
+    res.json({ ok: allRestOk, steps, verdict, botStatus: req.bot.getStatus() });
+  });
+
   api.get('/discord/guilds', requireRole('administrateur'), async (req, res) => {
     if (!req.bot.client || req.bot.status !== 'online') return res.json([]);
     const guilds = [...req.bot.client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name }));
