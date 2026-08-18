@@ -95,10 +95,15 @@ async function main() {
     setTimeout(async () => {
       let anyRetried = false;
       for (const controller of botManager.allControllers()) {
-        const bStatus = controller.getStatus().status;
+        const st = controller.getStatus();
         const hasToken = !!controller.store.getBot().token;
-        if (hasToken && (bStatus === 'offline' || bStatus === 'error')) {
-          console.log(`🔄 Watchdog [tenant ${controller.tenantId}] : bot ${bStatus}, tentative de reconnexion…`);
+        // Ne retente JAMAIS pendant un rate limit Discord (429) explicite :
+        // c'est justement ça qui transformait un blocage temporaire en
+        // blocage permanent (le watchdog relançait des requêtes toutes les
+        // 15s pendant que Discord demandait d'attendre).
+        if (st.rateLimitedUntil) continue;
+        if (hasToken && (st.status === 'offline' || st.status === 'error')) {
+          console.log(`🔄 Watchdog [tenant ${controller.tenantId}] : bot ${st.status}, tentative de reconnexion…`);
           anyRetried = true;
           try {
             await controller.start();
@@ -108,10 +113,11 @@ async function main() {
         }
       }
       for (const controller of statusBotManager.allControllers()) {
-        const sStatus = controller.getStatus().status;
+        const sSt = controller.getStatus();
         const hasToken = !!controller.store.getStatusBot().token;
-        if (hasToken && (sStatus === 'offline' || sStatus === 'error')) {
-          console.log(`🔄 Watchdog [tenant ${controller.tenantId}] : bot status ${sStatus}, tentative de reconnexion…`);
+        if (sSt.rateLimitedUntil) continue;
+        if (hasToken && (sSt.status === 'offline' || sSt.status === 'error')) {
+          console.log(`🔄 Watchdog [tenant ${controller.tenantId}] : bot status ${sSt.status}, tentative de reconnexion…`);
           anyRetried = true;
           try {
             await controller.start();
