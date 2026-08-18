@@ -836,8 +836,17 @@ function createDashboardServer() {
   });
 
   api.post('/bot/restart', requireRole('administrateur'), async (req, res) => {
-    await req.bot.restart();
-    res.json({ ok: true, status: req.bot.getStatus() });
+    const status = await req.bot.restart();
+    if (status.rateLimitedUntil) {
+      res.set('Retry-After', String(Math.max(status.retryAfterSeconds || 0, 0)));
+      return res.status(429).json({
+        ok: false,
+        status,
+        error: status.lastError,
+        retryAfterSeconds: status.retryAfterSeconds,
+      });
+    }
+    res.json({ ok: true, status });
   });
 
   api.post('/bot/refresh-panel', requireRole('administrateur'), async (req, res) => {
@@ -859,6 +868,19 @@ function createDashboardServer() {
 
     const steps = [];
     const started = Date.now();
+    let rateLimitedSeconds = null;
+
+    // Extrait le délai d'attente exact renvoyé par Discord sur un 429,
+    // depuis le header Retry-After ou le corps JSON ({ retry_after }).
+    async function readRetryAfter(res) {
+      const header = res.headers.get('retry-after');
+      if (header && !Number.isNaN(Number(header))) return Number(header);
+      try {
+        const body = await res.clone().json();
+        if (typeof body?.retry_after === 'number') return body.retry_after;
+      } catch {}
+      return null;
+    }
 
     try {
       const t0 = Date.now();
@@ -868,7 +890,18 @@ function createDashboardServer() {
         signal: ctrl,
       });
       const ms = Date.now() - t0;
-      if (meRes.status === 401) {
+      if (meRes.status === 429) {
+        const retryAfter = await readRetryAfter(meRes);
+        rateLimitedSeconds = retryAfter ?? rateLimitedSeconds ?? 60;
+        steps.push({
+          step: 'REST /users/@me',
+          ok: false,
+          ms,
+          detail: retryAfter
+            ? `Rate limité par Discord (HTTP 429). Ce n'est PAS un problème de token : Discord demande d'attendre ${Math.ceil(retryAfter)}s avant toute nouvelle requête (probablement l'IP partagée de l'hébergeur, ou trop de tentatives rapprochées). Arrête toute reconnexion jusque-là.`
+            : `Rate limité par Discord (HTTP 429) sans délai précisé dans la réponse. Arrête toute tentative de reconnexion pendant quelques minutes.`,
+        });
+      } else if (meRes.status === 401) {
         steps.push({ step: 'REST /users/@me', ok: false, ms, detail: 'Token invalide ou révoqué (401). Régénère le token sur le Developer Portal et recolle-le en entier, sans espace.' });
       } else if (!meRes.ok) {
         steps.push({ step: 'REST /users/@me', ok: false, ms, detail: `HTTP ${meRes.status}` });
